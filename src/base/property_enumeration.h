@@ -38,7 +38,7 @@ public:
     bool setValue(Enumeration::Value value);
     bool setValueByName(std::string_view name);
 
-    const char* dynTypeName() const override;
+    const char* dynTypeName() const override { return PropertyEnumeration::TypeName; }
     static const char TypeName[];
 
 private:

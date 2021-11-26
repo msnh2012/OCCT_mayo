@@ -7,10 +7,12 @@
 #include "io_occ_gltf_writer.h"
 
 #include "../base/application_item.h"
+#include "../base/enumeration_fromenum.h"
 #include "../base/occ_progress_indicator.h"
+#include "../base/property_array_of_string_metadata.h"
 #include "../base/property_builtins.h"
 #include "../base/property_enumeration.h"
-#include "../base/enumeration_fromenum.h"
+#include "../base/string_conv.h"
 #include "../base/text_id.h"
 #include "io_occ_common.h"
 
@@ -31,6 +33,8 @@ public:
                     textIdTr("Preferred transformation format for writing into glTF file"));
         this->forceExportUV.setDescription(
                     textIdTr("Export UV coordinates even if there is no mapped texture"));
+        this->metaDatas.setDescription(
+                    textIdTr("File metadata to put into glTF header section"));
 
         this->transformationFormat.mutableEnumeration().chopPrefix("RWGltf_WriterTrsfFormat_");
         this->transformationFormat.setDescriptions({
@@ -48,12 +52,14 @@ public:
         this->transformationFormat.setValue(defaults.transformationFormat);
         this->format.setValue(defaults.format);
         this->forceExportUV.setValue(defaults.forceExportUV);
+        this->metaDatas.clear();
     }
 
     PropertyEnum<RWMesh_CoordinateSystem> coordinatesConverter{ this, textId("coordinatesConverter") };
     PropertyEnum<RWGltf_WriterTrsfFormat> transformationFormat{ this, textId("transformationFormat") };
     PropertyEnum<Format> format{ this, textId("format") };
     PropertyBool forceExportUV{ this, textId("forceExportUV") };
+    PropertyArrayOfStringMetaData metaDatas{ this, textId("metaDatas") };
 };
 
 bool OccGltfWriter::transfer(Span<const ApplicationItem> spanAppItem, TaskProgress*)
@@ -86,8 +92,12 @@ bool OccGltfWriter::writeFile(const FilePath& filepath, TaskProgress* progress)
 
     Handle_Message_ProgressIndicator occProgress = new OccProgressIndicator(progress);
     const bool isBinary = m_params.format == Format::Binary;
+
+    TColStd_IndexedDataMapOfStringString fileInfo;
+    for (const StringMetaData& metaData : m_params.metaDatas)
+        fileInfo.Add(to_OccAsciiString(metaData.name), to_OccAsciiString(metaData.value));
+
     RWGltf_CafWriter writer(filepath.u8string().c_str(), isBinary);
-    const TColStd_IndexedDataMapOfStringString fileInfo;
     if (m_seqRootLabel.IsEmpty())
         return writer.Perform(m_document, fileInfo, occProgress->Start());
     else
@@ -107,6 +117,11 @@ void OccGltfWriter::applyProperties(const PropertyGroup* params)
         m_params.forceExportUV = ptr->forceExportUV;
         m_params.format = ptr->format;
         m_params.transformationFormat = ptr->transformationFormat;
+        {
+            m_params.metaDatas.clear();
+            for (const StringMetaData& metaData : ptr->metaDatas.get())
+                m_params.metaDatas.push_back(metaData);
+        }
     }
 }
 

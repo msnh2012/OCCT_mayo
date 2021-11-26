@@ -8,10 +8,12 @@
 
 #include "../base/document_ptr.h"
 #include "../base/io_writer.h"
+#include "../base/string_metadata.h"
 
 #include <RWGltf_WriterTrsfFormat.hxx>
 #include <RWMesh_CoordinateSystemConverter.hxx>
 #include <TDF_LabelSequence.hxx>
+#include <vector>
 
 namespace Mayo {
 namespace IO {
@@ -35,6 +37,7 @@ public:
         RWGltf_WriterTrsfFormat transformationFormat = RWGltf_WriterTrsfFormat_Compact;
         Format format = Format::Binary;
         bool forceExportUV = false;
+        std::vector<StringMetaData> metaDatas;
     };
     Parameters& parameters() { return m_params; }
     const Parameters& constParameters() const { return m_params; }

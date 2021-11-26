@@ -55,11 +55,6 @@ bool PropertyEnumeration::setValueByName(std::string_view name)
     return Property::setValueHelper(this, &m_value, m_enumeration.findValue(name));
 }
 
-const char* PropertyEnumeration::dynTypeName() const
-{
-    return PropertyEnumeration::TypeName;
-}
-
 const char PropertyEnumeration::TypeName[] = "Mayo::PropertyEnumeration";
 
 } // namespace Mayo

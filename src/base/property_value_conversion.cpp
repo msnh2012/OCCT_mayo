@@ -8,6 +8,7 @@
 
 #include "cpp_utils.h"
 #include "math_utils.h"
+#include "property_array_of_string_metadata.h"
 #include "property_builtins.h"
 #include "property_enumeration.h"
 #include "string_conv.h"
@@ -15,6 +16,7 @@
 #include "unit_system.h"
 
 #include <fmt/format.h>
+#include <jsoncpp/json/json.h>
 #include <charconv>
 #include <iostream>
 #include <sstream>
@@ -23,7 +25,7 @@ namespace Mayo {
 
 PropertyValueConversion::Variant PropertyValueConversion::toVariant(const Property& prop) const
 {
-    auto fnError = [=](std::string_view text) {
+    auto fnError = [](std::string_view text) {
         std::cerr << text << std::endl; // TODO Use other output stream(dedicated Messenger object?)
         return PropertyValueConversion::Variant{};
     };
@@ -80,6 +82,16 @@ PropertyValueConversion::Variant PropertyValueConversion::toVariant(const Proper
         sstr << trRes.value * trRes.factor;
         return sstr.str() + trRes.strUnit;
 #endif
+    }
+    else if (isType<PropertyArrayOfStringMetaData>(prop)) {
+        const auto& metaDatasProp = constRef<PropertyArrayOfStringMetaData>(prop);
+        Json::Value json;
+        for (const StringMetaData& metaData : metaDatasProp.get())
+            json[metaData.name] = metaData.value;
+
+        Json::StreamWriterBuilder jsonWriter;
+        jsonWriter["indentation"] = " ";
+        return Json::writeString(jsonWriter, json);
     }
 
     return {};
@@ -187,6 +199,28 @@ bool PropertyValueConversion::fromVariant(Property* prop, const Variant& variant
         }
         else {
             return fnError("fromVariant(BasePropertyQuantity) variant expected to hold string");
+        }
+    }
+    else if (isType<PropertyArrayOfStringMetaData>(prop)) {
+        if (variant.isConvertibleToConstRefString()) {
+            std::istringstream istr(variant.toConstRefString());
+            istr.setf(std::ios_base::skipws);
+            istr.imbue(std::locale::classic());
+            Json::CharReaderBuilder readerBuilder;
+            Json::CharReaderBuilder::setDefaults(&readerBuilder.settings_);
+            readerBuilder["allowSingleQuotes"] = true;
+            Json::Value json;
+            if (!Json::parseFromStream(readerBuilder, istr, &json, nullptr))
+               return fnError("fromVariant(PropertyArrayOfStringMetaData) failed to parse JSON string");
+
+            ptr<PropertyArrayOfStringMetaData>(prop)->clear();
+            for (const Json::String& memberName : json.getMemberNames())
+                ptr<PropertyArrayOfStringMetaData>(prop)->add(memberName, json[memberName].asString());
+
+            return true;
+        }
+        else {
+            return fnError("fromVariant(PropertyArrayOfStringMetaData) variant expected to hold JSON string");
         }
     }
 

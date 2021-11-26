@@ -75,6 +75,7 @@ SOURCES += \
     $$files(src/app/*.cpp) \
     \
     src/3rdparty/fmt/src/format.cc \
+    src/3rdparty/jsoncpp/jsoncpp.cpp \
 
 win32 {
     QT += winextras
