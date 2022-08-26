@@ -43,6 +43,7 @@ jobs:
         - name: Install OpenCascade[macOS]
           if: startsWith(matrix.os, 'macos')
           run: |
+              export HOMEBREW_NO_INSTALL_CLEANUP=TRUE
               brew install opencascade
               GH_CASCADE_BASE_DIR=`brew --cellar opencascade`
               GH_CASCADE_VERSION=`brew info opencascade | grep -E --only-matching --max-count=1 "[0-9]\.[0-9]\.[0-9]"`
