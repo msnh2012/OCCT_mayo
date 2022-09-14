@@ -45,13 +45,11 @@ jobs:
           run: |
               export HOMEBREW_NO_INSTALL_CLEANUP=TRUE
               brew install opencascade
-              GH_CASCADE_PREFIX_DIR=`brew --prefix opencascade`
-              echo "GH_CASCADE_PREFIX_DIR=$GH_CASCADE_PREFIX_DIR"
-              GH_CASCADE_BASE_DIR=`brew --cellar opencascade`
+              GH_CASCADE_BASE_DIR=`brew info opencascade | grep -E -i --only-matching --max-count=1 "^(/[a-z\.\-_0-9]+)+"`
               echo "GH_CASCADE_BASE_DIR=$GH_CASCADE_BASE_DIR"
-              GH_CASCADE_VERSION=`brew info opencascade | grep -E --only-matching --max-count=1 "[0-9]\.[0-9]\.[0-9]"`
-              echo "GH_CASCADE_INC_DIR=$GH_CASCADE_BASE_DIR/$GH_CASCADE_VERSION/include/opencascade" >> $GITHUB_ENV
-              echo "GH_CASCADE_LIB_DIR=$GH_CASCADE_BASE_DIR/$GH_CASCADE_VERSION/lib" >> $GITHUB_ENV
+              [ -d $GH_CASCADE_BASE_DIR ] && echo "OpenCascade base dir exists"
+              echo "GH_CASCADE_INC_DIR=$GH_CASCADE_BASE_DIR/include/opencascade" >> $GITHUB_ENV
+              echo "GH_CASCADE_LIB_DIR=$GH_CASCADE_BASE_DIR/lib" >> $GITHUB_ENV
 
         - name: Get count of CPU cores
           uses: SimenB/github-actions-cpu-cores@v1
