@@ -12,7 +12,7 @@
 #include "../base/text_id.h"
 
 #include <QtCore/QObject>
-#include <QtGui/QAction>
+#include <QAction>
 class QWidget;
 
 namespace Mayo {
@@ -52,13 +52,6 @@ public:
 
     QAction* action() const { return m_action; }
     virtual bool getEnabledStatus() const { return true; }
-
-    template<typename CMD>
-    static CMD* create(IAppContext* context) {
-        auto cmd = new CMD(context);
-        QObject::connect(cmd->action(), &QAction::triggered, cmd, &Command::execute);
-        return cmd;
-    }
 
 protected:
     Application* app() const;
@@ -110,6 +103,23 @@ public:
 class CommandCloseCurrentDocument : public Command {
 public:
     CommandCloseCurrentDocument(IAppContext* context);
+    void execute() override;
+    bool getEnabledStatus() const override;
+
+private:
+    void updateActionText(Document::Identifier docId);
+};
+
+class CommandCloseAllDocuments : public Command {
+public:
+    CommandCloseAllDocuments(IAppContext* context);
+    void execute() override;
+    bool getEnabledStatus() const override;
+};
+
+class CommandCloseAllDocumentsExceptCurrent : public Command {
+public:
+    CommandCloseAllDocumentsExceptCurrent(IAppContext* context);
     void execute() override;
     bool getEnabledStatus() const override;
 

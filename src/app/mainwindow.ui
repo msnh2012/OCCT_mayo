@@ -565,8 +565,6 @@
     </property>
     <addaction name="actionRecentFiles"/>
     <addaction name="separator"/>
-    <addaction name="actionCloseAllDocuments"/>
-    <addaction name="actionCloseAllExcept"/>
     <addaction name="separator"/>
     <addaction name="actionQuit"/>
    </widget>
@@ -733,19 +731,6 @@
    </property>
    <property name="shortcut">
     <string>Ctrl+-</string>
-   </property>
-  </action>
-  <action name="actionCloseAllDocuments">
-   <property name="text">
-    <string>Close all</string>
-   </property>
-   <property name="shortcut">
-    <string>Ctrl+Shift+W</string>
-   </property>
-  </action>
-  <action name="actionCloseAllExcept">
-   <property name="text">
-    <string>Close all except &quot;%1&quot;</string>
    </property>
   </action>
   <action name="actionProjectionPerspective">

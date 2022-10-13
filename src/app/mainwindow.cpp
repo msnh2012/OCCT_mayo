@@ -191,12 +191,14 @@ MainWindow::MainWindow(GuiApplication* guiApp, QWidget *parent)
     auto fnGetAction = [=](std::string_view name) {
         return this->getCommand(name)->action();
     };
-    fnAddCmd("new-doc", Command::create<CommandNewDocument>(appContext));
-    fnAddCmd("open-docs", Command::create<CommandOpenDocuments>(appContext));
-    fnAddCmd("close-doc", Command::create<CommandCloseCurrentDocument>(appContext));
-    fnAddCmd("import", Command::create<CommandImportInCurrentDocument>(appContext));
-    fnAddCmd("export", Command::create<CommandExportSelectedApplicationItems>(appContext));
-    fnAddCmd("fullscreen", Command::create<CommandExportSelectedApplicationItems>(appContext));
+    fnAddCmd("new-doc", new CommandNewDocument(appContext));
+    fnAddCmd("open-docs", new CommandOpenDocuments(appContext));
+    fnAddCmd("close-doc", new CommandCloseCurrentDocument(appContext));
+    fnAddCmd("close-all-docs", new CommandCloseAllDocuments(appContext));
+    fnAddCmd("close-all-docs-except-current", new CommandCloseAllDocumentsExceptCurrent(appContext));
+    fnAddCmd("import", new CommandImportInCurrentDocument(appContext));
+    fnAddCmd("export", new CommandExportSelectedApplicationItems(appContext));
+    fnAddCmd("fullscreen", new CommandMainWidgetToggleFullscreen(appContext));
 
     auto fnInsertAction = [&](QMenu* menu, QAction* before, QAction* action) {
         menu->insertAction(before, action);
@@ -210,7 +212,9 @@ MainWindow::MainWindow(GuiApplication* guiApp, QWidget *parent)
         fnInsertAction(menu, frontAction, fnGetAction("open-docs"));
         fnInsertAction(menu, m_ui->actionRecentFiles, fnGetAction("import"));
         fnInsertAction(menu, m_ui->actionRecentFiles, fnGetAction("export"));
-        fnInsertAction(menu, m_ui->actionCloseAllDocuments, fnGetAction("close-doc"));
+        fnInsertAction(menu, m_ui->actionRecentFiles, fnGetAction("close-doc"));
+        fnInsertAction(menu, m_ui->actionRecentFiles, fnGetAction("close-all-docs"));
+        fnInsertAction(menu, m_ui->actionRecentFiles, fnGetAction("close-all-docs-except-current"));
     }
 
     {
@@ -250,12 +254,6 @@ MainWindow::MainWindow(GuiApplication* guiApp, QWidget *parent)
                 m_ui->widget_HomeFiles, &WidgetHomeFiles::recentFileOpenRequested,
                 this, &MainWindow::openDocument);
     // "File" actions
-    QObject::connect(
-                m_ui->actionCloseAllDocuments, &QAction::triggered,
-                this, &MainWindow::closeAllDocuments);
-    QObject::connect(
-                m_ui->actionCloseAllExcept, &QAction::triggered,
-                this, &MainWindow::closeAllDocumentsExceptCurrent);
     QObject::connect(
                 m_ui->actionQuit, &QAction::triggered,
                 this, &MainWindow::quitApp);
@@ -704,13 +702,7 @@ void MainWindow::onCurrentDocumentIndexChanged(int idx)
         return filepath;
     };
     const DocumentPtr docPtr = m_guiApp->application()->findDocumentByIndex(idx);
-    const QString docName = to_QString(docPtr ? docPtr->name() : std::string{});
-    const QString textActionCloseAllExcept =
-            docPtr ?
-                tr("Close all except %1").arg(fnFilepathQuoted(docName)) :
-                tr("Close all except current");
     const FilePath docFilePath = docPtr ? docPtr->filePath() : FilePath();
-    m_ui->actionCloseAllExcept->setText(textActionCloseAllExcept);
     m_ui->widget_FileSystem->setLocation(filepathTo<QFileInfo>(docFilePath));
 
     if (this->currentWidgetGuiDocument()) {
@@ -745,47 +737,6 @@ void MainWindow::onCurrentDocumentIndexChanged(int idx)
     }
  }
 
-void MainWindow::closeCurrentDocument()
-{
-    this->closeDocument(this->currentDocumentIndex());
-}
-
-void MainWindow::closeDocument(WidgetGuiDocument* widget)
-{
-    if (widget) {
-        const DocumentPtr& doc = widget->guiDocument()->document();
-        m_ui->stack_GuiDocuments->removeWidget(widget);
-        widget->deleteLater();
-        m_guiApp->application()->closeDocument(doc);
-        this->updateControlsActivation();
-    }
-}
-
-void MainWindow::closeDocument(int docIndex)
-{
-    if (0 <= docIndex && docIndex < m_ui->stack_GuiDocuments->count())
-        this->closeDocument(this->widgetGuiDocument(docIndex));
-}
-
-void MainWindow::closeAllDocumentsExceptCurrent()
-{
-    WidgetGuiDocument* current = this->currentWidgetGuiDocument();
-    std::vector<WidgetGuiDocument*> vecWidget;
-    for (int i = 0; i < m_ui->stack_GuiDocuments->count(); ++i)
-        vecWidget.push_back(this->widgetGuiDocument(i));
-
-    for (WidgetGuiDocument* widget : vecWidget) {
-        if (widget != current)
-            this->closeDocument(widget);
-    }
-}
-
-void MainWindow::closeAllDocuments()
-{
-    while (m_ui->stack_GuiDocuments->count() > 0)
-        this->closeCurrentDocument();
-}
-
 void MainWindow::openDocument(const FilePath& fp)
 {
     this->openDocumentsFromList(Span<const FilePath>(&fp, 1));
@@ -819,8 +770,6 @@ void MainWindow::updateControlsActivation()
     m_ui->actionZoomIn->setEnabled(!appDocumentsEmpty);
     m_ui->actionZoomOut->setEnabled(!appDocumentsEmpty);
     m_ui->actionSaveImageView->setEnabled(!appDocumentsEmpty);
-    m_ui->actionCloseAllDocuments->setEnabled(!appDocumentsEmpty);
-    m_ui->actionCloseAllExcept->setEnabled(!appDocumentsEmpty);
     const int currentDocIndex = this->currentDocumentIndex();
     m_ui->actionPreviousDoc->setEnabled(!appDocumentsEmpty && currentDocIndex > 0);
     m_ui->actionNextDoc->setEnabled(!appDocumentsEmpty && currentDocIndex < appDocumentsCount - 1);

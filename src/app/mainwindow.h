@@ -42,9 +42,6 @@ protected:
 
 private:
     // -- File menu
-    void closeCurrentDocument();
-    void closeAllDocumentsExceptCurrent();
-    void closeAllDocuments();
     void quitApp();
     // -- Display menu
     void toggleCurrentDocOriginTrihedron();
@@ -67,9 +64,6 @@ private:
     void onWidgetFileSystemLocationActivated(const QFileInfo& loc);
     void onLeftContentsPageChanged(int pageId);
     void onCurrentDocumentIndexChanged(int idx);
-
-    void closeDocument(WidgetGuiDocument* widget);
-    void closeDocument(int docIndex);
 
     void updateControlsActivation();
 

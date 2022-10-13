@@ -147,6 +147,15 @@ QString strFilepathQuoted(const QString& filepath)
     return filepath;
 }
 
+void closeDocument(IAppContext* context, Document::Identifier docId)
+{
+    auto app = context->guiApp()->application();
+    DocumentPtr doc = app->findDocumentByIdentifier(docId);
+    context->deleteDocumentWidget(doc);
+    app->closeDocument(doc);
+    context->updateControlsEnabledStatus();
+}
+
 } // namespace
 
 Command::Command(IAppContext* context)
@@ -174,6 +183,7 @@ void Command::setCurrentDocument(const DocumentPtr& doc)
 void Command::setAction(QAction* action)
 {
     m_action = action;
+    QObject::connect(action, &QAction::triggered, this, &Command::execute);
 }
 
 CommandNewDocument::CommandNewDocument(IAppContext* context)
@@ -384,10 +394,7 @@ CommandCloseCurrentDocument::CommandCloseCurrentDocument(IAppContext* context)
 
 void CommandCloseCurrentDocument::execute()
 {
-    const DocumentPtr& doc = this->app()->findDocumentByIdentifier(this->context()->currentDocument());
-    this->context()->deleteDocumentWidget(doc);
-    this->app()->closeDocument(doc);
-    this->context()->updateControlsEnabledStatus();
+    closeDocument(this->context(), this->currentDocument());
 }
 
 bool CommandCloseCurrentDocument::getEnabledStatus() const
@@ -406,12 +413,85 @@ void CommandCloseCurrentDocument::updateActionText(Document::Identifier docId)
     this->action()->setText(textActionClose);
 }
 
+CommandCloseAllDocuments::CommandCloseAllDocuments(IAppContext* context)
+    : Command(context)
+{
+    auto action = new QAction(this);
+    action->setText(Command::tr("Close all"));
+    action->setToolTip(Command::tr("Close all documents"));
+    action->setShortcut(Qt::CTRL + Qt::SHIFT + Qt::Key_W);
+    this->setAction(action);
+}
+
+void CommandCloseAllDocuments::execute()
+{
+    while (!this->guiApp()->guiDocuments().empty())
+        closeDocument(this->context(), this->currentDocument());
+}
+
+bool CommandCloseAllDocuments::getEnabledStatus() const
+{
+    return this->app()->documentCount() != 0;
+}
+
+CommandCloseAllDocumentsExceptCurrent::CommandCloseAllDocumentsExceptCurrent(IAppContext* context)
+    : Command(context)
+{
+    auto action = new QAction(this);
+    action->setText(Command::tr("Close all except current"));
+    action->setToolTip(Command::tr("Close all except current document"));
+    this->setAction(action);
+
+    QObject::connect(
+                context, &IAppContext::currentDocumentChanged,
+                this, &CommandCloseAllDocumentsExceptCurrent::updateActionText
+    );
+    this->app()->signalDocumentNameChanged.connectSlot([=](const DocumentPtr& doc) {
+        if (this->currentDocument() == doc->identifier())
+            this->updateActionText(this->currentDocument());
+    });
+
+    this->updateActionText(-1);
+}
+
+void CommandCloseAllDocumentsExceptCurrent::execute()
+{
+#if 4
+    GuiDocument* currentGuiDoc = this->currentGuiDocument();
+    std::vector<GuiDocument*> vecGuiDoc;
+    for (GuiDocument* guiDoc : this->guiApp()->guiDocuments())
+        vecGuiDoc.push_back(guiDoc);
+
+    for (GuiDocument* guiDoc : vecGuiDoc) {
+        if (guiDoc != currentGuiDoc)
+            closeDocument(this->context(), guiDoc->document()->identifier());
+    }
+#endif
+}
+
+bool CommandCloseAllDocumentsExceptCurrent::getEnabledStatus() const
+{
+    return this->app()->documentCount() != 0;
+}
+
+void CommandCloseAllDocumentsExceptCurrent::updateActionText(Document::Identifier docId)
+{
+    DocumentPtr docPtr = this->app()->findDocumentByIdentifier(docId);
+    const QString docName = to_QString(docPtr ? docPtr->name() : std::string{});
+    const QString textActionClose =
+            docPtr ?
+                Command::tr("Close all except \"%1\"").arg(strFilepathQuoted(docName)) :
+                Command::tr("Close all except current");
+    this->action()->setText(textActionClose);
+}
+
 CommandMainWidgetToggleFullscreen::CommandMainWidgetToggleFullscreen(IAppContext* context)
     : Command(context)
 {
     auto action = new QAction(this);
     action->setText(Command::tr("Fullscreen"));
     action->setToolTip(Command::tr("Switch Fullscreen/Normal"));
+    action->setShortcut(Qt::Key_F11);
     action->setCheckable(true);
     action->setChecked(context->mainWidget()->isFullScreen());
     this->setAction(action);
