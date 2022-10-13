@@ -16,9 +16,12 @@ class QFileInfo;
 
 namespace Mayo {
 
+class Command;
 class GuiApplication;
 class GuiDocument;
 class WidgetGuiDocument;
+
+class AppContext;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -32,9 +35,6 @@ public:
 
     bool eventFilter(QObject* watched, QEvent* event) override;
 
-signals:
-    void currentDocumentIndexChanged(int docIdx);
-
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dropEvent(QDropEvent* event) override;
@@ -42,10 +42,6 @@ protected:
 
 private:
     // -- File menu
-    void newDocument();
-    void openDocuments();
-    void importInCurrentDoc();
-    void exportSelectedItems();
     void closeCurrentDocument();
     void closeAllDocumentsExceptCurrent();
     void closeAllDocuments();
@@ -60,7 +56,6 @@ private:
     void saveImageView();
     void inspectXde();
     // -- Window menu
-    void toggleFullscreen();
     void toggleLeftSidebar();
     // -- Help menu
     void aboutMayo();
@@ -89,10 +84,23 @@ private:
     QMenu* createMenuRecentFiles();
     QMenu* createMenuDisplayMode();
 
+    Command* getCommand(std::string_view name) const;
+    template<typename CMD>CMD* getCommand() const {
+        for (const auto& mapPair : m_mapCommand) {
+            auto cmd = dynamic_cast<CMD*>(mapPair.second);
+            if (cmd)
+                return cmd;
+        }
+
+        return nullptr;
+    }
+
+    friend class AppContext;
+
     GuiApplication* m_guiApp = nullptr;
     class Ui_MainWindow* m_ui = nullptr;
     TaskManager m_taskMgr;
-    Qt::WindowStates m_previousWindowState = Qt::WindowNoState;
+    std::unordered_map<std::string_view, Command*> m_mapCommand;
     std::unique_ptr<PropertyGroup> m_ptrCurrentNodeDataProperties;
     std::unique_ptr<PropertyGroupSignals> m_ptrCurrentNodeGraphicsProperties;
 };

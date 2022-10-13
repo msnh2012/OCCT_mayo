@@ -22,6 +22,7 @@
 #include "../gui/gui_application.h"
 #include "../gui/gui_document.h"
 #include "app_module.h"
+#include "commands.h"
 #include "dialog_about.h"
 #include "dialog_inspect_xde.h"
 #include "dialog_options.h"
@@ -67,120 +68,6 @@ namespace Mayo {
 
 namespace Internal {
 
-static QString fileFilter(IO::Format format)
-{
-    if (format == IO::Format_Unknown)
-        return {};
-
-    QString filter;
-    for (std::string_view suffix : IO::formatFileSuffixes(format)) {
-        if (suffix.data() != IO::formatFileSuffixes(format).front().data())
-            filter += " ";
-
-        const QString qsuffix = to_QString(suffix);
-        filter += "*." + qsuffix;
-#ifdef Q_OS_UNIX
-        filter += " *." + qsuffix.toUpper();
-#endif
-    }
-
-    //: %1 is the format identifier and %2 is the file filters string
-    return MainWindow::tr("%1 files(%2)")
-            .arg(to_QString(IO::formatIdentifier(format)))
-            .arg(filter);
-}
-
-static IO::Format formatFromFilter(const QString& filter)
-{
-    for (IO::Format format : AppModule::get()->ioSystem()->readerFormats()) {
-        if (filter == fileFilter(format))
-            return format;
-    }
-
-    for (IO::Format format : AppModule::get()->ioSystem()->writerFormats()) {
-        if (filter == fileFilter(format))
-            return format;
-    }
-
-    return IO::Format_Unknown;
-}
-
-// TODO: move in Options
-struct ImportExportSettings {
-    FilePath openDir;
-    QString selectedFilter;
-
-    static ImportExportSettings load()
-    {
-        return {
-            AppModule::get()->properties()->lastOpenDir.value(),
-            to_QString(AppModule::get()->properties()->lastSelectedFormatFilter.value())
-        };
-    }
-
-    static void save(const ImportExportSettings& sets)
-    {
-        AppModule::get()->properties()->lastOpenDir.setValue(sets.openDir);
-        AppModule::get()->properties()->lastSelectedFormatFilter.setValue(to_stdString(sets.selectedFilter));
-    }
-};
-
-struct OpenFileNames {
-    std::vector<FilePath> listFilepath;
-    ImportExportSettings lastIoSettings;
-    IO::Format selectedFormat;
-
-    enum GetOption {
-        GetOne,
-        GetMany
-    };
-
-    static OpenFileNames get(
-            QWidget* parentWidget,
-            OpenFileNames::GetOption option = OpenFileNames::GetMany)
-    {
-        OpenFileNames result;
-        result.selectedFormat = IO::Format_Unknown;
-        result.lastIoSettings = ImportExportSettings::load();
-        QStringList listFormatFilter;
-        for (IO::Format format : AppModule::get()->ioSystem()->readerFormats())
-            listFormatFilter += fileFilter(format);
-
-        const QString allFilesFilter = MainWindow::tr("All files(*.*)");
-        listFormatFilter.append(allFilesFilter);
-        const QString dlgTitle = MainWindow::tr("Select Part File");
-        const QString dlgOpenDir = filepathTo<QString>(result.lastIoSettings.openDir);
-        const QString dlgFilter = listFormatFilter.join(QLatin1String(";;"));
-        QString* dlgPtrSelFilter = &result.lastIoSettings.selectedFilter;
-        if (option == OpenFileNames::GetOne) {
-            const QString strFilepath =
-                    QFileDialog::getOpenFileName(
-                        parentWidget, dlgTitle, dlgOpenDir, dlgFilter, dlgPtrSelFilter);
-            result.listFilepath.clear();
-            result.listFilepath.push_back(filepathFrom(strFilepath));
-        }
-        else {
-            const QStringList listStrFilePath =
-                    QFileDialog::getOpenFileNames(
-                        parentWidget, dlgTitle, dlgOpenDir, dlgFilter, dlgPtrSelFilter);
-            result.listFilepath.clear();
-            for (const QString& strFilePath : listStrFilePath)
-                result.listFilepath.push_back(filepathFrom(strFilePath));
-        }
-
-        if (!result.listFilepath.empty()) {
-            result.lastIoSettings.openDir = result.listFilepath.front();
-            result.selectedFormat =
-                    result.lastIoSettings.selectedFilter != allFilesFilter ?
-                        formatFromFilter(result.lastIoSettings.selectedFilter) :
-                        IO::Format_Unknown;
-            ImportExportSettings::save(result.lastIoSettings);
-        }
-
-        return result;
-    }
-};
-
 static void handleMessage(Messenger::MessageType msgType, const QString& text, QWidget* mainWnd)
 {
     switch (msgType) {
@@ -199,6 +86,82 @@ static void handleMessage(Messenger::MessageType msgType, const QString& text, Q
 }
 
 } // namespace Internal
+
+class AppContext : public IAppContext {
+public:
+    AppContext(MainWindow* wnd)
+        : m_wnd(wnd)
+    {
+        QObject::connect(
+                    m_wnd->m_ui->combo_GuiDocuments, qOverload<int>(&QComboBox::currentIndexChanged),
+                    this, &AppContext::onCurrentDocumentIndexChanged
+        );
+    }
+
+    GuiApplication* guiApp() const override {
+        return m_wnd->m_guiApp;
+    }
+
+    TaskManager* taskMgr() const override {
+        return &m_wnd->m_taskMgr;
+    }
+
+    QWidget* mainWidget() const override {
+        return m_wnd;
+    }
+
+    Document::Identifier currentDocument() const override
+    {
+        const int index = m_wnd->m_ui->combo_GuiDocuments->currentIndex();
+        auto widgetDoc = m_wnd->widgetGuiDocument(index);
+        return widgetDoc ? widgetDoc->guiDocument()->document()->identifier() : -1;
+    }
+
+    void setCurrentDocument(Document::Identifier docId) override
+    {
+        auto widgetDoc = this->findWidgetGuiDocument([=](WidgetGuiDocument* widgetDoc) {
+            return widgetDoc->guiDocument()->document()->identifier() == docId;
+        });
+        const int docIndex = m_wnd->m_ui->stack_GuiDocuments->indexOf(widgetDoc);
+        m_wnd->m_ui->combo_GuiDocuments->setCurrentIndex(docIndex);
+    }
+
+    void updateControlsEnabledStatus() override {
+        m_wnd->updateControlsActivation();
+    }
+
+    void deleteDocumentWidget(const DocumentPtr& doc) override
+    {
+        QWidget* widgetDoc = this->findWidgetGuiDocument([&](WidgetGuiDocument* widgetDoc) {
+            return widgetDoc->guiDocument()->document()->identifier() == doc->identifier();
+        });
+        if (widgetDoc) {
+            m_wnd->m_ui->stack_GuiDocuments->removeWidget(widgetDoc);
+            widgetDoc->deleteLater();
+        }
+    }
+
+private:
+    WidgetGuiDocument* findWidgetGuiDocument(std::function<bool(WidgetGuiDocument*)> fn) const
+    {
+        const int widgetCount = m_wnd->m_ui->stack_GuiDocuments->count();
+        for (int i = 0; i < widgetCount; ++i) {
+            auto candidate = m_wnd->widgetGuiDocument(i);
+            if (candidate && fn(candidate))
+                return candidate;
+        }
+
+        return nullptr;
+    }
+
+    void onCurrentDocumentIndexChanged(int docIndex)
+    {
+        auto widgetDoc = m_wnd->widgetGuiDocument(docIndex);
+        emit this->currentDocumentChanged(widgetDoc ? widgetDoc->guiDocument()->document()->identifier() : -1);
+    }
+
+    MainWindow* m_wnd = nullptr;
+};
 
 MainWindow::MainWindow(GuiApplication* guiApp, QWidget *parent)
     : QMainWindow(parent),
@@ -220,24 +183,55 @@ MainWindow::MainWindow(GuiApplication* guiApp, QWidget *parent)
     m_ui->widget_Properties->setRowHeightFactor(1.4);
     m_ui->widget_Properties->clear();
 
+
+    auto appContext = new AppContext(this);
+    auto fnAddCmd = [=](std::string_view name, Command* cmd) {
+        m_mapCommand.insert({ name, cmd });
+    };
+    auto fnGetAction = [=](std::string_view name) {
+        return this->getCommand(name)->action();
+    };
+    fnAddCmd("new-doc", Command::create<CommandNewDocument>(appContext));
+    fnAddCmd("open-docs", Command::create<CommandOpenDocuments>(appContext));
+    fnAddCmd("close-doc", Command::create<CommandCloseCurrentDocument>(appContext));
+    fnAddCmd("import", Command::create<CommandImportInCurrentDocument>(appContext));
+    fnAddCmd("export", Command::create<CommandExportSelectedApplicationItems>(appContext));
+    fnAddCmd("fullscreen", Command::create<CommandExportSelectedApplicationItems>(appContext));
+
+    auto fnInsertAction = [&](QMenu* menu, QAction* before, QAction* action) {
+        menu->insertAction(before, action);
+        return action;
+    };
+
+    {
+        auto menu = m_ui->menu_File;
+        QAction* frontAction = menu->actions().front();
+        fnInsertAction(menu, frontAction, fnGetAction("new-doc"));
+        fnInsertAction(menu, frontAction, fnGetAction("open-docs"));
+        fnInsertAction(menu, m_ui->actionRecentFiles, fnGetAction("import"));
+        fnInsertAction(menu, m_ui->actionRecentFiles, fnGetAction("export"));
+        fnInsertAction(menu, m_ui->actionCloseAllDocuments, fnGetAction("close-doc"));
+    }
+
+    {
+        auto menu = m_ui->menu_Window;
+        fnInsertAction(menu, menu->actions().front(), fnGetAction("fullscreen"));
+    }
+
     m_ui->btn_PreviousGuiDocument->setDefaultAction(m_ui->actionPreviousDoc);
     m_ui->btn_NextGuiDocument->setDefaultAction(m_ui->actionNextDoc);
-    m_ui->btn_CloseGuiDocument->setDefaultAction(m_ui->actionCloseDoc);
+    m_ui->btn_CloseGuiDocument->setDefaultAction(fnGetAction("close-doc"));
 
     m_ui->actionAboutMayo->setText(tr("About %1").arg(QApplication::applicationName()));
-    m_ui->actionImport->setIcon(mayoTheme()->icon(Theme::Icon::Import));
-    m_ui->actionExportSelectedItems->setIcon(mayoTheme()->icon(Theme::Icon::Export));
     m_ui->actionZoomIn->setIcon(mayoTheme()->icon(Theme::Icon::ZoomIn));
     m_ui->actionZoomOut->setIcon(mayoTheme()->icon(Theme::Icon::ZoomOut));
     m_ui->actionPreviousDoc->setIcon(mayoTheme()->icon(Theme::Icon::Back));
     m_ui->actionNextDoc->setIcon(mayoTheme()->icon(Theme::Icon::Next));
-    m_ui->actionCloseDoc->setIcon(mayoTheme()->icon(Theme::Icon::Cross));
     m_ui->actionSaveImageView->setIcon(mayoTheme()->icon(Theme::Icon::Camera));
     m_ui->actionToggleLeftSidebar->setIcon(mayoTheme()->icon(Theme::Icon::LeftSidebar));
     m_ui->btn_CloseLeftSideBar->setIcon(mayoTheme()->icon(Theme::Icon::BackSquare));
 
     m_ui->actionToggleLeftSidebar->setChecked(m_ui->widget_Left->isVisible());
-    m_ui->actionToggleFullscreen->setChecked(this->isFullScreen());
     m_ui->actionToggleOriginTrihedron->setChecked(false);
     m_ui->actionTogglePerformanceStats->setChecked(false);
 
@@ -248,29 +242,14 @@ MainWindow::MainWindow(GuiApplication* guiApp, QWidget *parent)
     // "HomeFiles" actions
     QObject::connect(
                 m_ui->widget_HomeFiles, &WidgetHomeFiles::newDocumentRequested,
-                m_ui->actionNewDoc, &QAction::trigger);
+                this->getCommand("new-doc"), &Command::execute);
     QObject::connect(
                 m_ui->widget_HomeFiles, &WidgetHomeFiles::openDocumentsRequested,
-                m_ui->actionOpen, &QAction::trigger);
+                this->getCommand("open-docs"), &Command::execute);
     QObject::connect(
                 m_ui->widget_HomeFiles, &WidgetHomeFiles::recentFileOpenRequested,
-                this, [=](const FilePath& fp) { this->openDocument(fp); });
+                this, &MainWindow::openDocument);
     // "File" actions
-    QObject::connect(
-                m_ui->actionNewDoc, &QAction::triggered,
-                this, &MainWindow::newDocument);
-    QObject::connect(
-                m_ui->actionOpen, &QAction::triggered,
-                this, &MainWindow::openDocuments);
-    QObject::connect(
-                m_ui->actionImport, &QAction::triggered,
-                this, &MainWindow::importInCurrentDoc);
-    QObject::connect(
-                m_ui->actionExportSelectedItems, &QAction::triggered,
-                this, &MainWindow::exportSelectedItems);
-    QObject::connect(
-                m_ui->actionCloseDoc, &QAction::triggered,
-                this, &MainWindow::closeCurrentDocument);
     QObject::connect(
                 m_ui->actionCloseAllDocuments, &QAction::triggered,
                 this, &MainWindow::closeAllDocuments);
@@ -334,8 +313,8 @@ MainWindow::MainWindow(GuiApplication* guiApp, QWidget *parent)
                 this, &MainWindow::aboutMayo);
     // "Window" actions and navigation in documents
     QObject::connect(
-                m_ui->actionToggleFullscreen, &QAction::toggled,
-                this, &MainWindow::toggleFullscreen);
+                m_ui->combo_GuiDocuments, sigComboIndexChanged,
+                this, &MainWindow::onCurrentDocumentIndexChanged);
     QObject::connect(
                 m_ui->actionToggleLeftSidebar, &QAction::toggled,
                 this, &MainWindow::toggleLeftSidebar);
@@ -345,12 +324,6 @@ MainWindow::MainWindow(GuiApplication* guiApp, QWidget *parent)
     QObject::connect(m_ui->actionNextDoc, &QAction::triggered, this, [=]{
         this->setCurrentDocumentIndex(this->currentDocumentIndex() + 1);
     });
-    QObject::connect(
-                m_ui->combo_GuiDocuments, sigComboIndexChanged,
-                this, &MainWindow::currentDocumentIndexChanged);
-    QObject::connect(
-                this, &MainWindow::currentDocumentIndexChanged,
-                this, &MainWindow::onCurrentDocumentIndexChanged);
     QObject::connect(
                 m_ui->widget_FileSystem, &WidgetFileSystem::locationActivated,
                 this, &MainWindow::onWidgetFileSystemLocationActivated);
@@ -376,8 +349,8 @@ MainWindow::MainWindow(GuiApplication* guiApp, QWidget *parent)
     {
         // Opened documents GUI
         auto listViewBtns = new ItemViewButtons(m_ui->listView_OpenedDocuments, this);
-        listViewBtns->addButton(
-                    1, mayoTheme()->icon(Theme::Icon::Cross), m_ui->actionCloseDoc->toolTip());
+        auto actionCloseDoc = fnGetAction("close-doc");
+        listViewBtns->addButton(1, actionCloseDoc->icon(), actionCloseDoc->toolTip());
         listViewBtns->setButtonDetection(1, -1, QVariant());
         listViewBtns->setButtonDisplayColumn(1, 0);
         listViewBtns->setButtonDisplayModes(1, ItemViewButtons::DisplayOnDetection);
@@ -477,100 +450,6 @@ void MainWindow::showEvent(QShowEvent* event)
 #endif
 }
 
-void MainWindow::newDocument()
-{
-    static unsigned docSequenceId = 0;
-    auto docPtr = m_guiApp->application()->newDocument(Document::Format::Binary);
-    docPtr->setName(to_stdString(tr("Anonymous%1").arg(++docSequenceId)));
-}
-
-void MainWindow::openDocuments()
-{
-    const auto resFileNames = Internal::OpenFileNames::get(this);
-    if (!resFileNames.listFilepath.empty())
-        this->openDocumentsFromList(resFileNames.listFilepath);
-}
-
-void MainWindow::importInCurrentDoc()
-{
-    auto widgetGuiDoc = this->currentWidgetGuiDocument();
-    if (!widgetGuiDoc)
-        return;
-
-    const auto resFileNames = Internal::OpenFileNames::get(this);
-    if (resFileNames.listFilepath.empty())
-        return;
-
-    auto appModule = AppModule::get();
-    const TaskId taskId = m_taskMgr.newTask([=](TaskProgress* progress) {
-        QElapsedTimer chrono;
-        chrono.start();
-
-        const bool okImport = appModule->ioSystem()->importInDocument()
-                .targetDocument(widgetGuiDoc->guiDocument()->document())
-                .withFilepaths(resFileNames.listFilepath)
-                .withParametersProvider(appModule)
-                .withEntityPostProcess([=](TDF_Label labelEntity, TaskProgress* progress) {
-                        appModule->computeBRepMesh(labelEntity, progress);
-                })
-                .withEntityPostProcessRequiredIf(&IO::formatProvidesBRep)
-                .withEntityPostProcessInfoProgress(20, textIdTr("Mesh BRep shapes"))
-                .withMessenger(appModule)
-                .withTaskProgress(progress)
-                .execute();
-        if (okImport)
-            appModule->emitInfo(fmt::format(textIdTr("Import time: {}ms"), chrono.elapsed()));
-    });
-    const QString taskTitle =
-            resFileNames.listFilepath.size() > 1 ?
-                tr("Import") :
-                filepathTo<QString>(resFileNames.listFilepath.front().stem());
-    m_taskMgr.setTitle(taskId, to_stdString(taskTitle));
-    m_taskMgr.run(taskId);
-    for (const FilePath& fp : resFileNames.listFilepath)
-        appModule->prependRecentFile(fp);
-}
-
-void MainWindow::exportSelectedItems()
-{
-    auto appModule = AppModule::get();
-    QStringList listWriterFileFilter;
-    for (IO::Format format : appModule->ioSystem()->writerFormats())
-        listWriterFileFilter.append(Internal::fileFilter(format));
-
-    auto lastSettings = Internal::ImportExportSettings::load();
-    const QString strFilepath =
-            QFileDialog::getSaveFileName(
-                this,
-                tr("Select Output File"),
-                filepathTo<QString>(lastSettings.openDir),
-                listWriterFileFilter.join(QLatin1String(";;")),
-                &lastSettings.selectedFilter);
-    if (strFilepath.isEmpty())
-        return;
-
-    lastSettings.openDir = filepathFrom(strFilepath);
-    const IO::Format format = Internal::formatFromFilter(lastSettings.selectedFilter);
-    const TaskId taskId = m_taskMgr.newTask([=](TaskProgress* progress) {
-        QElapsedTimer chrono;
-        chrono.start();
-        const bool okExport =
-                appModule->ioSystem()->exportApplicationItems()
-                .targetFile(filepathFrom(strFilepath))
-                .targetFormat(format)
-                .withItems(m_guiApp->selectionModel()->selectedItems())
-                .withParameters(appModule->findWriterParameters(format))
-                .withMessenger(appModule)
-                .withTaskProgress(progress)
-                .execute();
-        if (okExport)
-            appModule->emitInfo(fmt::format(textIdTr("Export time: {}ms"), chrono.elapsed()));
-    });
-    m_taskMgr.setTitle(taskId, to_stdString(QFileInfo(strFilepath).fileName()));
-    m_taskMgr.run(taskId);
-    Internal::ImportExportSettings::save(lastSettings);
-}
-
 void MainWindow::quitApp()
 {
     QApplication::quit();
@@ -633,20 +512,6 @@ void MainWindow::inspectXde()
         auto dlg = new DialogInspectXde(this);
         dlg->load(xcafDoc);
         QtWidgetsUtils::asyncDialogExec(dlg);
-    }
-}
-
-void MainWindow::toggleFullscreen()
-{
-    if (this->isFullScreen()) {
-        if (m_previousWindowState.testFlag(Qt::WindowMaximized))
-            this->showMaximized();
-        else
-            this->showNormal();
-    }
-    else {
-        m_previousWindowState = this->windowState();
-        this->showFullScreen();
     }
 }
 
@@ -840,16 +705,11 @@ void MainWindow::onCurrentDocumentIndexChanged(int idx)
     };
     const DocumentPtr docPtr = m_guiApp->application()->findDocumentByIndex(idx);
     const QString docName = to_QString(docPtr ? docPtr->name() : std::string{});
-    const QString textActionClose =
-            docPtr ?
-                tr("Close %1").arg(fnFilepathQuoted(docName)) :
-                tr("Close");
     const QString textActionCloseAllExcept =
             docPtr ?
                 tr("Close all except %1").arg(fnFilepathQuoted(docName)) :
                 tr("Close all except current");
     const FilePath docFilePath = docPtr ? docPtr->filePath() : FilePath();
-    m_ui->actionCloseDoc->setText(textActionClose);
     m_ui->actionCloseAllExcept->setText(textActionCloseAllExcept);
     m_ui->widget_FileSystem->setLocation(filepathTo<QFileInfo>(docFilePath));
 
@@ -875,7 +735,7 @@ void MainWindow::onCurrentDocumentIndexChanged(int idx)
                 viewProjectionType == Graphic3d_Camera::Projection_Perspective ?
                         m_ui->actionProjectionPerspective :
                         m_ui->actionProjectionOrthographic;
-            QSignalBlocker sigBlk(m_ui->menu_Projection); Q_UNUSED(sigBlk);
+            [[maybe_unused]] QSignalBlocker sigBlk(m_ui->menu_Projection);
             actionProjection->setChecked(true);
         }
     }
@@ -933,43 +793,8 @@ void MainWindow::openDocument(const FilePath& fp)
 
 void MainWindow::openDocumentsFromList(Span<const FilePath> listFilePath)
 {
-    auto app = m_guiApp->application();
-    auto appModule = AppModule::get();
-    for (const FilePath& fp : listFilePath) {
-        DocumentPtr docPtr = app->findDocumentByLocation(fp);
-        if (docPtr.IsNull()) {
-            docPtr = app->newDocument();
-            const TaskId taskId = m_taskMgr.newTask([=](TaskProgress* progress) {
-                QElapsedTimer chrono;
-                chrono.start();
-                docPtr->setName(fp.stem().u8string());
-                docPtr->setFilePath(fp);
-
-                const bool okImport =
-                        appModule->ioSystem()->importInDocument()
-                        .targetDocument(docPtr)
-                        .withFilepath(fp)
-                        .withParametersProvider(appModule)
-                        .withEntityPostProcess([=](TDF_Label labelEntity, TaskProgress* progress) {
-                                appModule->computeBRepMesh(labelEntity, progress);
-                        })
-                        .withEntityPostProcessRequiredIf(&IO::formatProvidesBRep)
-                        .withEntityPostProcessInfoProgress(20, textIdTr("Mesh BRep shapes"))
-                        .withMessenger(appModule)
-                        .withTaskProgress(progress)
-                        .execute();
-                if (okImport)
-                    appModule->emitInfo(fmt::format(textIdTr("Import time: {}ms"), chrono.elapsed()));
-            });
-            m_taskMgr.setTitle(taskId, fp.stem().u8string());
-            m_taskMgr.run(taskId);
-            AppModule::get()->prependRecentFile(fp);
-        }
-        else {
-            if (listFilePath.size() == 1)
-                this->setCurrentDocumentIndex(app->findIndexOfDocument(docPtr));
-        }
-    }
+    auto cmd = this->getCommand<CommandOpenDocuments>();
+    cmd->openDocumentsFromList(listFilePath);
 }
 
 void MainWindow::updateControlsActivation()
@@ -981,7 +806,10 @@ void MainWindow::updateControlsActivation()
     if (currMainPage != newMainPage)
         m_ui->stack_Main->setCurrentWidget(newMainPage);
 
-    m_ui->actionImport->setEnabled(!appDocumentsEmpty);
+    for (auto [name, cmd] : m_mapCommand) {
+        cmd->action()->setEnabled(cmd->getEnabledStatus());
+    }
+
     m_ui->menu_Projection->setEnabled(!appDocumentsEmpty);
     m_ui->actionProjectionOrthographic->setEnabled(!appDocumentsEmpty);
     m_ui->actionProjectionPerspective->setEnabled(!appDocumentsEmpty);
@@ -991,13 +819,11 @@ void MainWindow::updateControlsActivation()
     m_ui->actionZoomIn->setEnabled(!appDocumentsEmpty);
     m_ui->actionZoomOut->setEnabled(!appDocumentsEmpty);
     m_ui->actionSaveImageView->setEnabled(!appDocumentsEmpty);
-    m_ui->actionCloseDoc->setEnabled(!appDocumentsEmpty);
     m_ui->actionCloseAllDocuments->setEnabled(!appDocumentsEmpty);
     m_ui->actionCloseAllExcept->setEnabled(!appDocumentsEmpty);
     const int currentDocIndex = this->currentDocumentIndex();
     m_ui->actionPreviousDoc->setEnabled(!appDocumentsEmpty && currentDocIndex > 0);
     m_ui->actionNextDoc->setEnabled(!appDocumentsEmpty && currentDocIndex < appDocumentsCount - 1);
-    m_ui->actionExportSelectedItems->setEnabled(!appDocumentsEmpty);
     m_ui->actionToggleLeftSidebar->setEnabled(newMainPage != m_ui->page_MainHome);
     m_ui->combo_GuiDocuments->setEnabled(!appDocumentsEmpty);
 
@@ -1147,6 +973,12 @@ QMenu* MainWindow::createMenuDisplayMode()
     }
 
     return menu;
+}
+
+Command* MainWindow::getCommand(std::string_view name) const
+{
+    auto it = m_mapCommand.find(name);
+    return it != m_mapCommand.cend() ? it->second : nullptr;
 }
 
 } // namespace Mayo
