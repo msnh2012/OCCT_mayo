@@ -45,12 +45,6 @@ private:
     void toggleCurrentDocPerformanceStats();
     void zoomInCurrentDoc();
     void zoomOutCurrentDoc();
-    // -- Tools menu
-    void editOptions();
-    void saveImageView();
-    void inspectXde();
-    // -- Window menu
-    void toggleLeftSidebar();
     // -- Help menu
     void aboutMayo();
     void reportbug();

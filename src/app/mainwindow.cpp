@@ -22,11 +22,10 @@
 #include "../gui/gui_application.h"
 #include "../gui/gui_document.h"
 #include "app_module.h"
-#include "commands.h"
+#include "commands_file.h"
+#include "commands_tools.h"
+#include "commands_window.h"
 #include "dialog_about.h"
-#include "dialog_inspect_xde.h"
-#include "dialog_options.h"
-#include "dialog_save_image_view.h"
 #include "dialog_task_manager.h"
 #include "document_property_group.h"
 #include "document_tree_node_properties_providers.h"
@@ -35,6 +34,7 @@
 #include "item_view_buttons.h"
 #include "qstring_conv.h"
 #include "qtgui_utils.h"
+#include "qtwidgets_utils.h"
 #include "theme.h"
 #include "widget_file_system.h"
 #include "widget_gui_document.h"
@@ -43,7 +43,6 @@
 #include "widget_occ_view.h"
 #include "widget_occ_view_controller.h"
 #include "widget_properties_editor.h"
-#include "qtwidgets_utils.h"
 
 #ifdef Q_OS_WIN
 #  include "windows/win_taskbar_global_progress.h"
@@ -59,9 +58,6 @@
 #include <QActionGroup> // WARNING Qt5 <QtWidgets/...> / Qt6 <QtGui/...>
 #include <QtWidgets/QApplication>
 #include <QtDebug>
-
-#include <fmt/format.h>
-#include <unordered_set>
 
 namespace Mayo {
 
@@ -105,8 +101,39 @@ public:
         return &m_wnd->m_taskMgr;
     }
 
-    QWidget* mainWidget() const override {
+    QWidget* widgetMain() const override {
         return m_wnd;
+    }
+
+    QWidget* widgetLeftSidebar() const override {
+        return m_wnd->m_ui->widget_Left;
+    }
+
+    ModeWidgetMain modeWidgetMain() const override
+    {
+        auto widget = m_wnd->m_ui->stack_Main->currentWidget();
+        if (widget == m_wnd->m_ui->page_MainHome)
+            return ModeWidgetMain::Home;
+        else if (widget == m_wnd->m_ui->page_MainControl)
+            return ModeWidgetMain::Documents;
+
+        return ModeWidgetMain::Unknown;
+    }
+
+    int findDocumentIndex(Document::Identifier docId) const override
+    {
+        int index = -1;
+        auto widgetDoc = this->findWidgetGuiDocument([&](WidgetGuiDocument* candidate) {
+                ++index;
+                return candidate->documentIdentifier() == docId;
+        });
+        return widgetDoc ? index : -1;
+    }
+
+    Document::Identifier findDocumentFromIndex(int index) const override
+    {
+        auto widgetDoc = m_wnd->widgetGuiDocument(index);
+        return widgetDoc ? widgetDoc->documentIdentifier() : -1;
     }
 
     Document::Identifier currentDocument() const override
@@ -196,8 +223,15 @@ MainWindow::MainWindow(GuiApplication* guiApp, QWidget *parent)
     this->addCommand<CommandCloseAllDocuments>("close-all-docs");
     this->addCommand<CommandCloseAllDocumentsExceptCurrent>("close-all-docs-except-current");
     this->addCommand<CommandQuitApplication>("quit");
+    // "Tools" commands
+    this->addCommand<CommandSaveViewImage>("save-view-image");
+    this->addCommand<CommandInspectXde>("inspect-xde");
+    this->addCommand<CommandEditOptions>("edit-options");
     // "Window" commands
     this->addCommand<CommandMainWidgetToggleFullscreen>("fullscreen");
+    this->addCommand<CommandLeftSidebarWidgetToggle>("toggle-left-sidebar");
+    this->addCommand<CommandPreviousDocument>("previous-doc");
+    this->addCommand<CommandNextDocument>("next-doc");
 
     {
         auto menu = m_ui->menu_File;
@@ -216,24 +250,31 @@ MainWindow::MainWindow(GuiApplication* guiApp, QWidget *parent)
     }
 
     {
-        auto menu = m_ui->menu_Window;
-        menu->insertAction(menu->actions().front(), fnGetAction("fullscreen"));
+        auto menu = m_ui->menu_Tools;
+        menu->addAction(fnGetAction("save-view-image"));
+        menu->addAction(fnGetAction("inspect-xde"));
+        menu->addSeparator();
+        menu->addAction(fnGetAction("edit-options"));
     }
 
-    m_ui->btn_PreviousGuiDocument->setDefaultAction(m_ui->actionPreviousDoc);
-    m_ui->btn_NextGuiDocument->setDefaultAction(m_ui->actionNextDoc);
+    {
+        auto menu = m_ui->menu_Window;
+        menu->addAction(fnGetAction("toggle-left-sidebar"));
+        menu->addAction(fnGetAction("fullscreen"));
+        menu->addSeparator();
+        menu->addAction(fnGetAction("previous-doc"));
+        menu->addAction(fnGetAction("next-doc"));
+    }
+
+    m_ui->btn_PreviousGuiDocument->setDefaultAction(fnGetAction("previous-doc"));
+    m_ui->btn_NextGuiDocument->setDefaultAction(fnGetAction("next-doc"));
     m_ui->btn_CloseGuiDocument->setDefaultAction(fnGetAction("close-doc"));
 
     m_ui->actionAboutMayo->setText(tr("About %1").arg(QApplication::applicationName()));
     m_ui->actionZoomIn->setIcon(mayoTheme()->icon(Theme::Icon::ZoomIn));
     m_ui->actionZoomOut->setIcon(mayoTheme()->icon(Theme::Icon::ZoomOut));
-    m_ui->actionPreviousDoc->setIcon(mayoTheme()->icon(Theme::Icon::Back));
-    m_ui->actionNextDoc->setIcon(mayoTheme()->icon(Theme::Icon::Next));
-    m_ui->actionSaveImageView->setIcon(mayoTheme()->icon(Theme::Icon::Camera));
-    m_ui->actionToggleLeftSidebar->setIcon(mayoTheme()->icon(Theme::Icon::LeftSidebar));
     m_ui->btn_CloseLeftSideBar->setIcon(mayoTheme()->icon(Theme::Icon::BackSquare));
 
-    m_ui->actionToggleLeftSidebar->setChecked(m_ui->widget_Left->isVisible());
     m_ui->actionToggleOriginTrihedron->setChecked(false);
     m_ui->actionTogglePerformanceStats->setChecked(false);
 
@@ -265,7 +306,7 @@ MainWindow::MainWindow(GuiApplication* guiApp, QWidget *parent)
         group->addAction(m_ui->actionProjectionOrthographic);
         group->addAction(m_ui->actionProjectionPerspective);
     }
-    QObject::connect(m_ui->menu_Projection, &QMenu::triggered, this, [=](QAction* action){
+    QObject::connect(m_ui->menu_Projection, &QMenu::triggered, this, [=](QAction* action) {
         if (this->currentWidgetGuiDocument()) {
             const GuiDocument* guiDoc = this->currentWidgetGuiDocument()->guiDocument();
             guiDoc->v3dView()->Camera()->SetProjectionType(
@@ -287,16 +328,6 @@ MainWindow::MainWindow(GuiApplication* guiApp, QWidget *parent)
     QObject::connect(
                 m_ui->actionZoomOut, &QAction::triggered,
                 this, &MainWindow::zoomOutCurrentDoc);
-    // "Tools" actions
-    QObject::connect(
-                m_ui->actionSaveImageView, &QAction::triggered,
-                this, &MainWindow::saveImageView);
-    QObject::connect(
-                m_ui->actionInspectXDE, &QAction::triggered,
-                this, &MainWindow::inspectXde);
-    QObject::connect(
-                m_ui->actionOptions, &QAction::triggered,
-                this, &MainWindow::editOptions);
     // "Help" actions
     QObject::connect(
                 m_ui->actionReportBug, &QAction::triggered,
@@ -309,21 +340,12 @@ MainWindow::MainWindow(GuiApplication* guiApp, QWidget *parent)
                 m_ui->combo_GuiDocuments, sigComboIndexChanged,
                 this, &MainWindow::onCurrentDocumentIndexChanged);
     QObject::connect(
-                m_ui->actionToggleLeftSidebar, &QAction::toggled,
-                this, &MainWindow::toggleLeftSidebar);
-    QObject::connect(m_ui->actionPreviousDoc, &QAction::triggered, this, [=]{
-        this->setCurrentDocumentIndex(this->currentDocumentIndex() - 1);
-    });
-    QObject::connect(m_ui->actionNextDoc, &QAction::triggered, this, [=]{
-        this->setCurrentDocumentIndex(this->currentDocumentIndex() + 1);
-    });
-    QObject::connect(
                 m_ui->widget_FileSystem, &WidgetFileSystem::locationActivated,
                 this, &MainWindow::onWidgetFileSystemLocationActivated);
     // Left header bar of controls
     QObject::connect(
                 m_ui->btn_CloseLeftSideBar, &QAbstractButton::clicked,
-                this, &MainWindow::toggleLeftSidebar);
+                this->getCommand("toggle-left-sidebar"), &Command::execute);
     // ...
     QObject::connect(
                 m_ui->combo_LeftContents, sigComboIndexChanged,
@@ -473,43 +495,6 @@ void MainWindow::zoomInCurrentDoc()
 void MainWindow::zoomOutCurrentDoc()
 {
     this->currentWidgetGuiDocument()->controller()->zoomOut();
-}
-
-void MainWindow::editOptions()
-{
-    auto dlg = new DialogOptions(AppModule::get()->settings(), this);
-    QtWidgetsUtils::asyncDialogExec(dlg);
-}
-
-void MainWindow::saveImageView()
-{
-    auto widgetGuiDoc = this->currentWidgetGuiDocument();
-    auto dlg = new DialogSaveImageView(widgetGuiDoc->guiDocument()->v3dView());
-    QtWidgetsUtils::asyncDialogExec(dlg);
-}
-
-void MainWindow::inspectXde()
-{
-    const Span<const ApplicationItem> spanAppItem = m_guiApp->selectionModel()->selectedItems();
-    DocumentPtr xcafDoc;
-    for (const ApplicationItem& appItem : spanAppItem) {
-        if (appItem.document()->isXCafDocument()) {
-            xcafDoc = appItem.document();
-            break;
-        }
-    }
-
-    if (!xcafDoc.IsNull()) {
-        auto dlg = new DialogInspectXde(this);
-        dlg->load(xcafDoc);
-        QtWidgetsUtils::asyncDialogExec(dlg);
-    }
-}
-
-void MainWindow::toggleLeftSidebar()
-{
-    const bool isVisible = m_ui->widget_Left->isVisible();
-    m_ui->widget_Left->setVisible(!isVisible);
 }
 
 void MainWindow::aboutMayo()
@@ -754,20 +739,7 @@ void MainWindow::updateControlsActivation()
     m_ui->actionTogglePerformanceStats->setEnabled(!appDocumentsEmpty);
     m_ui->actionZoomIn->setEnabled(!appDocumentsEmpty);
     m_ui->actionZoomOut->setEnabled(!appDocumentsEmpty);
-    m_ui->actionSaveImageView->setEnabled(!appDocumentsEmpty);
-    const int currentDocIndex = this->currentDocumentIndex();
-    m_ui->actionPreviousDoc->setEnabled(!appDocumentsEmpty && currentDocIndex > 0);
-    m_ui->actionNextDoc->setEnabled(!appDocumentsEmpty && currentDocIndex < appDocumentsCount - 1);
-    m_ui->actionToggleLeftSidebar->setEnabled(newMainPage != m_ui->page_MainHome);
     m_ui->combo_GuiDocuments->setEnabled(!appDocumentsEmpty);
-
-    Span<const ApplicationItem> spanSelectedAppItem = m_guiApp->selectionModel()->selectedItems();
-    const ApplicationItem firstAppItem =
-            !spanSelectedAppItem.empty() ? spanSelectedAppItem.front() : ApplicationItem();
-    m_ui->actionInspectXDE->setEnabled(
-                spanSelectedAppItem.size() == 1
-                && firstAppItem.isValid()
-                && firstAppItem.document()->isXCafDocument());
 }
 
 int MainWindow::currentDocumentIndex() const

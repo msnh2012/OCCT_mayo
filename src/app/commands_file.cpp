@@ -4,7 +4,7 @@
 ** See license at https://github.com/fougue/mayo/blob/master/LICENSE.txt
 ****************************************************************************/
 
-#include "commands.h"
+#include "commands_file.h"
 
 #include "../base/application.h"
 #include "../base/task_manager.h"
@@ -152,38 +152,6 @@ QString strFilepathQuoted(const QString& filepath)
 
 } // namespace
 
-IAppContext::IAppContext(QObject* parent)
-    : QObject(parent)
-{
-}
-
-Command::Command(IAppContext* context)
-    : QObject(context ? context->mainWidget() : nullptr),
-      m_context(context)
-{
-}
-
-Application* Command::app() const
-{
-    return m_context->guiApp()->application().get();
-}
-
-GuiDocument* Command::currentGuiDocument() const
-{
-    DocumentPtr doc = this->app()->findDocumentByIdentifier(this->currentDocument());
-    return this->guiApp()->findGuiDocument(doc);
-}
-
-void Command::setCurrentDocument(const DocumentPtr& doc)
-{
-    m_context->setCurrentDocument(doc->identifier());
-}
-
-void Command::setAction(QAction* action)
-{
-    m_action = action;
-    QObject::connect(action, &QAction::triggered, this, &Command::execute);
-}
 
 void FileCommandTools::closeDocument(IAppContext* context, Document::Identifier docId)
 {
@@ -269,9 +237,59 @@ CommandOpenDocuments::CommandOpenDocuments(IAppContext* context)
 
 void CommandOpenDocuments::execute()
 {
-    const auto resFileNames = OpenFileNames::get(this->mainWidget());
+    const auto resFileNames = OpenFileNames::get(this->widgetMain());
     if (!resFileNames.listFilepath.empty())
         FileCommandTools::openDocumentsFromList(this->context(), resFileNames.listFilepath);
+}
+
+CommandRecentFiles::CommandRecentFiles(IAppContext* context)
+    : Command(context)
+{
+    auto action = new QAction(this);
+    action->setText(Command::tr("Recent files"));
+    this->setAction(action);
+}
+
+CommandRecentFiles::CommandRecentFiles(IAppContext* context, QMenu* containerMenu)
+    : CommandRecentFiles(context)
+{
+    QObject::connect(
+                containerMenu, &QMenu::aboutToShow,
+                this, &CommandRecentFiles::recreateEntries
+    );
+}
+
+void CommandRecentFiles::execute()
+{
+}
+
+void CommandRecentFiles::recreateEntries()
+{
+    QMenu* menu = this->action()->menu();
+    if (!menu)
+        menu = new QMenu(this->widgetMain());
+
+    menu->clear();
+    int idFile = 0;
+    auto appModule = AppModule::get();
+    const RecentFiles& recentFiles = appModule->properties()->recentFiles.value();
+    for (const RecentFile& recentFile : recentFiles) {
+        const QString strFilePath = filepathTo<QString>(recentFile.filepath);
+        const QString strEntryRecentFile = Command::tr("%1 | %2").arg(++idFile).arg(strFilePath);
+        menu->addAction(strEntryRecentFile, this, [=]{
+            FileCommandTools::openDocument(this->context(), recentFile.filepath);
+        });
+    }
+
+    if (!recentFiles.empty()) {
+        menu->addSeparator();
+        menu->addAction(Command::tr("Clear menu"), this, [=]{
+            menu->clear();
+            appModule->properties()->recentFiles.setValue({});
+        });
+    }
+
+    this->action()->setMenu(menu);
 }
 
 CommandImportInCurrentDocument::CommandImportInCurrentDocument(IAppContext* context)
@@ -290,7 +308,7 @@ void CommandImportInCurrentDocument::execute()
     if (!guiDoc)
         return;
 
-    const auto resFileNames = OpenFileNames::get(this->mainWidget());
+    const auto resFileNames = OpenFileNames::get(this->widgetMain());
     if (resFileNames.listFilepath.empty())
         return;
 
@@ -349,7 +367,7 @@ void CommandExportSelectedApplicationItems::execute()
     auto lastSettings = ImportExportSettings::load();
     const QString strFilepath =
             QFileDialog::getSaveFileName(
-                this->mainWidget(),
+                this->widgetMain(),
                 Command::tr("Select Output File"),
                 filepathTo<QString>(lastSettings.openDir),
                 listWriterFileFilter.join(QLatin1String(";;")),
@@ -497,56 +515,6 @@ void CommandCloseAllDocumentsExceptCurrent::updateActionText(Document::Identifie
     this->action()->setText(textActionClose);
 }
 
-CommandRecentFiles::CommandRecentFiles(IAppContext* context)
-    : Command(context)
-{
-    auto action = new QAction(this);
-    action->setText(Command::tr("Recent files"));
-    this->setAction(action);
-}
-
-CommandRecentFiles::CommandRecentFiles(IAppContext* context, QMenu* containerMenu)
-    : CommandRecentFiles(context)
-{
-    QObject::connect(
-                containerMenu, &QMenu::aboutToShow,
-                this, &CommandRecentFiles::recreateEntries
-    );
-}
-
-void CommandRecentFiles::execute()
-{
-}
-
-void CommandRecentFiles::recreateEntries()
-{
-    QMenu* menu = this->action()->menu();
-    if (!menu)
-        menu = new QMenu(this->mainWidget());
-
-    menu->clear();
-    int idFile = 0;
-    auto appModule = AppModule::get();
-    const RecentFiles& recentFiles = appModule->properties()->recentFiles.value();
-    for (const RecentFile& recentFile : recentFiles) {
-        const QString strFilePath = filepathTo<QString>(recentFile.filepath);
-        const QString strEntryRecentFile = Command::tr("%1 | %2").arg(++idFile).arg(strFilePath);
-        menu->addAction(strEntryRecentFile, this, [=]{
-            FileCommandTools::openDocument(this->context(), recentFile.filepath);
-        });
-    }
-
-    if (!recentFiles.empty()) {
-        menu->addSeparator();
-        menu->addAction(Command::tr("Clear menu"), this, [=]{
-            menu->clear();
-            appModule->properties()->recentFiles.setValue({});
-        });
-    }
-
-    this->action()->setMenu(menu);
-}
-
 CommandQuitApplication::CommandQuitApplication(IAppContext* context)
     : Command(context)
 {
@@ -558,33 +526,6 @@ CommandQuitApplication::CommandQuitApplication(IAppContext* context)
 void CommandQuitApplication::execute()
 {
     QApplication::quit();
-}
-
-CommandMainWidgetToggleFullscreen::CommandMainWidgetToggleFullscreen(IAppContext* context)
-    : Command(context)
-{
-    auto action = new QAction(this);
-    action->setText(Command::tr("Fullscreen"));
-    action->setToolTip(Command::tr("Switch Fullscreen/Normal"));
-    action->setShortcut(Qt::Key_F11);
-    action->setCheckable(true);
-    action->setChecked(context->mainWidget()->isFullScreen());
-    this->setAction(action);
-}
-
-void CommandMainWidgetToggleFullscreen::execute()
-{
-    auto widget = this->mainWidget();
-    if (widget->isFullScreen()) {
-        if (m_previousWindowState.testFlag(Qt::WindowMaximized))
-            widget->showMaximized();
-        else
-            widget->showNormal();
-    }
-    else {
-        m_previousWindowState = widget->windowState();
-        widget->showFullScreen();
-    }
 }
 
 } // namespace Mayo
