@@ -12,7 +12,7 @@
 #include "../base/text_id.h"
 
 #include <QtCore/QObject>
-#include <QAction>
+#include <QAction> // WARNING Qt5 <QtWidgets/...> / Qt6 <QtGui/...>
 class QWidget;
 
 namespace Mayo {
@@ -25,6 +25,8 @@ class TaskManager;
 class IAppContext : public QObject {
     Q_OBJECT
 public:
+    IAppContext(QObject* parent = nullptr);
+
     virtual GuiApplication* guiApp() const = 0;
     virtual TaskManager* taskMgr() const = 0;
     virtual QWidget* mainWidget() const = 0;
@@ -73,6 +75,13 @@ private:
 // -- "File" commands
 // --
 
+class FileCommandTools {
+public:
+    static void closeDocument(IAppContext* context, Document::Identifier docId);
+    static void openDocumentsFromList(IAppContext* context, Span<const FilePath> listFilePath);
+    static void openDocument(IAppContext* context, FilePath fp);
+};
+
 class CommandNewDocument : public Command {
 public:
     CommandNewDocument(IAppContext* context);
@@ -83,7 +92,6 @@ class CommandOpenDocuments : public Command {
 public:
     CommandOpenDocuments(IAppContext* context);
     void execute() override;
-    void openDocumentsFromList(Span<const FilePath> listFilePath);
 };
 
 class CommandImportInCurrentDocument : public Command {
@@ -125,6 +133,20 @@ public:
 
 private:
     void updateActionText(Document::Identifier docId);
+};
+
+class CommandRecentFiles : public Command {
+public:
+    CommandRecentFiles(IAppContext* context);
+    CommandRecentFiles(IAppContext* context, QMenu* containerMenu);
+    void execute() override;
+    void recreateEntries();
+};
+
+class CommandQuitApplication : public Command {
+public:
+    CommandQuitApplication(IAppContext* context);
+    void execute() override;
 };
 
 // --

@@ -19,9 +19,8 @@ namespace Mayo {
 class Command;
 class GuiApplication;
 class GuiDocument;
+class IAppContext;
 class WidgetGuiDocument;
-
-class AppContext;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -41,8 +40,6 @@ protected:
     void showEvent(QShowEvent* event) override;
 
 private:
-    // -- File menu
-    void quitApp();
     // -- Display menu
     void toggleCurrentDocOriginTrihedron();
     void toggleCurrentDocPerformanceStats();
@@ -75,28 +72,45 @@ private:
     QWidget* findLeftHeaderPlaceHolder() const;
     QWidget* recreateLeftHeaderPlaceHolder();
     QMenu* createMenuModelTreeSettings();
-    QMenu* createMenuRecentFiles();
     QMenu* createMenuDisplayMode();
 
     Command* getCommand(std::string_view name) const;
-    template<typename CMD>CMD* getCommand() const {
-        for (const auto& mapPair : m_mapCommand) {
-            auto cmd = dynamic_cast<CMD*>(mapPair.second);
-            if (cmd)
-                return cmd;
-        }
-
-        return nullptr;
-    }
+    template<typename CMD> CMD* getCommand() const;
+    template<typename CMD, typename... ARGS> CMD* addCommand(std::string_view name, ARGS... p);
 
     friend class AppContext;
 
+    IAppContext* m_appContext = nullptr;
     GuiApplication* m_guiApp = nullptr;
-    class Ui_MainWindow* m_ui = nullptr;
     TaskManager m_taskMgr;
+    class Ui_MainWindow* m_ui = nullptr;
     std::unordered_map<std::string_view, Command*> m_mapCommand;
     std::unique_ptr<PropertyGroup> m_ptrCurrentNodeDataProperties;
     std::unique_ptr<PropertyGroupSignals> m_ptrCurrentNodeGraphicsProperties;
 };
+
+
+
+// --
+// -- Implementation
+// --
+
+template<typename CMD>CMD* MainWindow::getCommand() const
+{
+    for (const auto& mapPair : m_mapCommand) {
+        auto cmd = dynamic_cast<CMD*>(mapPair.second);
+        if (cmd)
+            return cmd;
+    }
+
+    return nullptr;
+}
+
+template<typename CMD, typename... ARGS> CMD* MainWindow::addCommand(std::string_view name, ARGS... p)
+{
+    auto cmd = new CMD(m_appContext, p...);
+    m_mapCommand.insert({ name, cmd });
+    return cmd;
+}
 
 } // namespace Mayo

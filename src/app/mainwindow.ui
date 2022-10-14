@@ -563,10 +563,6 @@
     <property name="title">
      <string>&amp;File</string>
     </property>
-    <addaction name="actionRecentFiles"/>
-    <addaction name="separator"/>
-    <addaction name="separator"/>
-    <addaction name="actionQuit"/>
    </widget>
    <widget class="QMenu" name="menu_Help">
     <property name="title">
@@ -619,11 +615,6 @@
    <addaction name="menu_Window"/>
    <addaction name="menu_Help"/>
   </widget>
-  <action name="actionQuit">
-   <property name="text">
-    <string>Quit</string>
-   </property>
-  </action>
   <action name="actionAboutMayo">
    <property name="text">
     <string>About Mayo</string>
@@ -699,11 +690,6 @@
    </property>
    <property name="shortcut">
     <string>Alt+0</string>
-   </property>
-  </action>
-  <action name="actionRecentFiles">
-   <property name="text">
-    <string>Recent files</string>
    </property>
   </action>
   <action name="actionToggleOriginTrihedron">

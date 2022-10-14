@@ -58,7 +58,6 @@
 #include <QtGui/QDropEvent>
 #include <QActionGroup> // WARNING Qt5 <QtWidgets/...> / Qt6 <QtGui/...>
 #include <QtWidgets/QApplication>
-#include <QtWidgets/QFileDialog>
 #include <QtDebug>
 
 #include <fmt/format.h>
@@ -114,13 +113,13 @@ public:
     {
         const int index = m_wnd->m_ui->combo_GuiDocuments->currentIndex();
         auto widgetDoc = m_wnd->widgetGuiDocument(index);
-        return widgetDoc ? widgetDoc->guiDocument()->document()->identifier() : -1;
+        return widgetDoc ? widgetDoc->documentIdentifier() : -1;
     }
 
     void setCurrentDocument(Document::Identifier docId) override
     {
         auto widgetDoc = this->findWidgetGuiDocument([=](WidgetGuiDocument* widgetDoc) {
-            return widgetDoc->guiDocument()->document()->identifier() == docId;
+            return widgetDoc->documentIdentifier() == docId;
         });
         const int docIndex = m_wnd->m_ui->stack_GuiDocuments->indexOf(widgetDoc);
         m_wnd->m_ui->combo_GuiDocuments->setCurrentIndex(docIndex);
@@ -133,7 +132,7 @@ public:
     void deleteDocumentWidget(const DocumentPtr& doc) override
     {
         QWidget* widgetDoc = this->findWidgetGuiDocument([&](WidgetGuiDocument* widgetDoc) {
-            return widgetDoc->guiDocument()->document()->identifier() == doc->identifier();
+            return widgetDoc->documentIdentifier() == doc->identifier();
         });
         if (widgetDoc) {
             m_wnd->m_ui->stack_GuiDocuments->removeWidget(widgetDoc);
@@ -157,7 +156,7 @@ private:
     void onCurrentDocumentIndexChanged(int docIndex)
     {
         auto widgetDoc = m_wnd->widgetGuiDocument(docIndex);
-        emit this->currentDocumentChanged(widgetDoc ? widgetDoc->guiDocument()->document()->identifier() : -1);
+        emit this->currentDocumentChanged(widgetDoc ? widgetDoc->documentIdentifier() : -1);
     }
 
     MainWindow* m_wnd = nullptr;
@@ -183,43 +182,42 @@ MainWindow::MainWindow(GuiApplication* guiApp, QWidget *parent)
     m_ui->widget_Properties->setRowHeightFactor(1.4);
     m_ui->widget_Properties->clear();
 
-
-    auto appContext = new AppContext(this);
-    auto fnAddCmd = [=](std::string_view name, Command* cmd) {
-        m_mapCommand.insert({ name, cmd });
-    };
+    m_appContext = new AppContext(this);
     auto fnGetAction = [=](std::string_view name) {
         return this->getCommand(name)->action();
     };
-    fnAddCmd("new-doc", new CommandNewDocument(appContext));
-    fnAddCmd("open-docs", new CommandOpenDocuments(appContext));
-    fnAddCmd("close-doc", new CommandCloseCurrentDocument(appContext));
-    fnAddCmd("close-all-docs", new CommandCloseAllDocuments(appContext));
-    fnAddCmd("close-all-docs-except-current", new CommandCloseAllDocumentsExceptCurrent(appContext));
-    fnAddCmd("import", new CommandImportInCurrentDocument(appContext));
-    fnAddCmd("export", new CommandExportSelectedApplicationItems(appContext));
-    fnAddCmd("fullscreen", new CommandMainWidgetToggleFullscreen(appContext));
-
-    auto fnInsertAction = [&](QMenu* menu, QAction* before, QAction* action) {
-        menu->insertAction(before, action);
-        return action;
-    };
+    // "File" commands
+    this->addCommand<CommandNewDocument>("new-doc");
+    this->addCommand<CommandOpenDocuments>("open-docs");
+    this->addCommand<CommandRecentFiles>("recent-files", m_ui->menu_File);
+    this->addCommand<CommandImportInCurrentDocument>("import");
+    this->addCommand<CommandExportSelectedApplicationItems>("export");
+    this->addCommand<CommandCloseCurrentDocument>("close-doc");
+    this->addCommand<CommandCloseAllDocuments>("close-all-docs");
+    this->addCommand<CommandCloseAllDocumentsExceptCurrent>("close-all-docs-except-current");
+    this->addCommand<CommandQuitApplication>("quit");
+    // "Window" commands
+    this->addCommand<CommandMainWidgetToggleFullscreen>("fullscreen");
 
     {
         auto menu = m_ui->menu_File;
-        QAction* frontAction = menu->actions().front();
-        fnInsertAction(menu, frontAction, fnGetAction("new-doc"));
-        fnInsertAction(menu, frontAction, fnGetAction("open-docs"));
-        fnInsertAction(menu, m_ui->actionRecentFiles, fnGetAction("import"));
-        fnInsertAction(menu, m_ui->actionRecentFiles, fnGetAction("export"));
-        fnInsertAction(menu, m_ui->actionRecentFiles, fnGetAction("close-doc"));
-        fnInsertAction(menu, m_ui->actionRecentFiles, fnGetAction("close-all-docs"));
-        fnInsertAction(menu, m_ui->actionRecentFiles, fnGetAction("close-all-docs-except-current"));
+        menu->addAction(fnGetAction("new-doc"));
+        menu->addAction(fnGetAction("open-docs"));
+        menu->addAction(fnGetAction("recent-files"));
+        menu->addSeparator();
+        menu->addAction(fnGetAction("import"));
+        menu->addAction(fnGetAction("export"));
+        menu->addSeparator();
+        menu->addAction(fnGetAction("close-doc"));
+        menu->addAction(fnGetAction("close-all-docs-except-current"));
+        menu->addAction(fnGetAction("close-all-docs"));
+        menu->addSeparator();
+        menu->addAction(fnGetAction("quit"));
     }
 
     {
         auto menu = m_ui->menu_Window;
-        fnInsertAction(menu, menu->actions().front(), fnGetAction("fullscreen"));
+        menu->insertAction(menu->actions().front(), fnGetAction("fullscreen"));
     }
 
     m_ui->btn_PreviousGuiDocument->setDefaultAction(m_ui->actionPreviousDoc);
@@ -246,24 +244,21 @@ MainWindow::MainWindow(GuiApplication* guiApp, QWidget *parent)
     // "HomeFiles" actions
     QObject::connect(
                 m_ui->widget_HomeFiles, &WidgetHomeFiles::newDocumentRequested,
-                this->getCommand("new-doc"), &Command::execute);
+                this->getCommand("new-doc"), &Command::execute
+    );
     QObject::connect(
                 m_ui->widget_HomeFiles, &WidgetHomeFiles::openDocumentsRequested,
-                this->getCommand("open-docs"), &Command::execute);
+                this->getCommand("open-docs"), &Command::execute
+    );
     QObject::connect(
                 m_ui->widget_HomeFiles, &WidgetHomeFiles::recentFileOpenRequested,
-                this, &MainWindow::openDocument);
-    // "File" actions
-    QObject::connect(
-                m_ui->actionQuit, &QAction::triggered,
-                this, &MainWindow::quitApp);
-    QObject::connect(
-                m_ui->menu_File, &QMenu::aboutToShow,
-                this, &MainWindow::createMenuRecentFiles);
+                this, &MainWindow::openDocument
+    );
+    // "Display" actions
     QObject::connect(
                 m_ui->menu_Display, &QMenu::aboutToShow,
-                this, &MainWindow::createMenuDisplayMode);
-    // "Display" actions
+                this, &MainWindow::createMenuDisplayMode
+    );
     {
         auto group = new QActionGroup(m_ui->menu_Projection);
         group->setExclusive(true);
@@ -357,8 +352,11 @@ MainWindow::MainWindow(GuiApplication* guiApp, QWidget *parent)
         listViewBtns->setButtonIconSize(1, QSize(iconSize * 0.66, iconSize * 0.66));
         listViewBtns->installDefaultItemDelegate();
         QObject::connect(listViewBtns, &ItemViewButtons::buttonClicked, this, [=](int btnId, QModelIndex index) {
-            if (btnId == 1)
-                this->closeDocument(index.row());
+            if (btnId == 1) {
+                auto widgetDoc = this->widgetGuiDocument(index.row());
+                if (widgetDoc)
+                    FileCommandTools::closeDocument(m_appContext, widgetDoc->documentIdentifier());
+            }
         });
     }
 
@@ -432,7 +430,7 @@ void MainWindow::dropEvent(QDropEvent* event)
     }
 
     event->acceptProposedAction();
-    this->openDocumentsFromList(listFilePath);
+    FileCommandTools::openDocumentsFromList(m_appContext, listFilePath);
 }
 
 void MainWindow::showEvent(QShowEvent* event)
@@ -446,11 +444,6 @@ void MainWindow::showEvent(QShowEvent* event)
 
     winProgress->setWindow(this->windowHandle());
 #endif
-}
-
-void MainWindow::quitApp()
-{
-    QApplication::quit();
 }
 
 void MainWindow::toggleCurrentDocOriginTrihedron()
@@ -694,13 +687,6 @@ void MainWindow::onCurrentDocumentIndexChanged(int idx)
 
     this->updateControlsActivation();
 
-    auto fnFilepathQuoted = [](const QString& filepath) {
-        for (QChar c : filepath) {
-            if (c.isSpace())
-                return "\"" + filepath + "\"";
-        }
-        return filepath;
-    };
     const DocumentPtr docPtr = m_guiApp->application()->findDocumentByIndex(idx);
     const FilePath docFilePath = docPtr ? docPtr->filePath() : FilePath();
     m_ui->widget_FileSystem->setLocation(filepathTo<QFileInfo>(docFilePath));
@@ -739,13 +725,12 @@ void MainWindow::onCurrentDocumentIndexChanged(int idx)
 
 void MainWindow::openDocument(const FilePath& fp)
 {
-    this->openDocumentsFromList(Span<const FilePath>(&fp, 1));
+    FileCommandTools::openDocument(m_appContext, fp);
 }
 
 void MainWindow::openDocumentsFromList(Span<const FilePath> listFilePath)
 {
-    auto cmd = this->getCommand<CommandOpenDocuments>();
-    cmd->openDocumentsFromList(listFilePath);
+    FileCommandTools::openDocumentsFromList(m_appContext, listFilePath);
 }
 
 void MainWindow::updateControlsActivation()
@@ -850,33 +835,6 @@ QMenu* MainWindow::createMenuModelTreeSettings()
             userActions.fnSyncItems();
     });
 
-    return menu;
-}
-
-QMenu* MainWindow::createMenuRecentFiles()
-{
-    QMenu* menu = m_ui->actionRecentFiles->menu();
-    if (!menu)
-        menu = new QMenu(this);
-
-    menu->clear();
-    int idFile = 0;
-    auto appModule = AppModule::get();
-    const RecentFiles& recentFiles = appModule->properties()->recentFiles.value();
-    for (const RecentFile& recentFile : recentFiles) {
-        const QString entryRecentFile = tr("%1 | %2").arg(++idFile).arg(filepathTo<QString>(recentFile.filepath));
-        menu->addAction(entryRecentFile, this, [=]{ this->openDocument(recentFile.filepath); });
-    }
-
-    if (!recentFiles.empty()) {
-        menu->addSeparator();
-        menu->addAction(tr("Clear menu"), this, [=]{
-            menu->clear();
-            appModule->properties()->recentFiles.setValue({});
-        });
-    }
-
-    m_ui->actionRecentFiles->setMenu(menu);
     return menu;
 }
 

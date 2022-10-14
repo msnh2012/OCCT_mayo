@@ -12,12 +12,15 @@
 #include "app_module.h"
 #include "filepath_conv.h"
 #include "qstring_conv.h"
+#include "recent_files.h"
 #include "theme.h"
 
 #include <fmt/format.h>
 #include <QtCore/QtDebug>
 #include <QtCore/QElapsedTimer>
+#include <QtWidgets/QApplication>
 #include <QtWidgets/QFileDialog>
+#include <QtWidgets/QMenu>
 
 namespace Mayo {
 
@@ -147,16 +150,12 @@ QString strFilepathQuoted(const QString& filepath)
     return filepath;
 }
 
-void closeDocument(IAppContext* context, Document::Identifier docId)
-{
-    auto app = context->guiApp()->application();
-    DocumentPtr doc = app->findDocumentByIdentifier(docId);
-    context->deleteDocumentWidget(doc);
-    app->closeDocument(doc);
-    context->updateControlsEnabledStatus();
-}
-
 } // namespace
+
+IAppContext::IAppContext(QObject* parent)
+    : QObject(parent)
+{
+}
 
 Command::Command(IAppContext* context)
     : QObject(context ? context->mainWidget() : nullptr),
@@ -184,6 +183,61 @@ void Command::setAction(QAction* action)
 {
     m_action = action;
     QObject::connect(action, &QAction::triggered, this, &Command::execute);
+}
+
+void FileCommandTools::closeDocument(IAppContext* context, Document::Identifier docId)
+{
+    auto app = context->guiApp()->application();
+    DocumentPtr doc = app->findDocumentByIdentifier(docId);
+    context->deleteDocumentWidget(doc);
+    app->closeDocument(doc);
+    context->updateControlsEnabledStatus();
+}
+
+void FileCommandTools::openDocumentsFromList(IAppContext* context, Span<const FilePath> listFilePath)
+{
+    auto app = context->guiApp()->application();
+    auto appModule = AppModule::get();
+    for (const FilePath& fp : listFilePath) {
+        DocumentPtr docPtr = app->findDocumentByLocation(fp);
+        if (docPtr.IsNull()) {
+            docPtr = app->newDocument();
+            const TaskId taskId = context->taskMgr()->newTask([=](TaskProgress* progress) {
+                QElapsedTimer chrono;
+                chrono.start();
+                docPtr->setName(fp.stem().u8string());
+                docPtr->setFilePath(fp);
+
+                const bool okImport =
+                        appModule->ioSystem()->importInDocument()
+                        .targetDocument(docPtr)
+                        .withFilepath(fp)
+                        .withParametersProvider(appModule)
+                        .withEntityPostProcess([=](TDF_Label labelEntity, TaskProgress* progress) {
+                            appModule->computeBRepMesh(labelEntity, progress);
+                        })
+                        .withEntityPostProcessRequiredIf(&IO::formatProvidesBRep)
+                        .withEntityPostProcessInfoProgress(20, Command::textIdTr("Mesh BRep shapes"))
+                        .withMessenger(appModule)
+                        .withTaskProgress(progress)
+                        .execute();
+                if (okImport)
+                    appModule->emitInfo(fmt::format(Command::textIdTr("Import time: {}ms"), chrono.elapsed()));
+            });
+            context->taskMgr()->setTitle(taskId, fp.stem().u8string());
+            context->taskMgr()->run(taskId);
+            appModule->prependRecentFile(fp);
+        }
+        else {
+            if (listFilePath.size() == 1)
+                context->setCurrentDocument(docPtr->identifier());
+        }
+    } // endfor()
+}
+
+void FileCommandTools::openDocument(IAppContext* context, FilePath fp)
+{
+    FileCommandTools::openDocumentsFromList(context, Span<const FilePath>(&fp, 1));
 }
 
 CommandNewDocument::CommandNewDocument(IAppContext* context)
@@ -217,47 +271,7 @@ void CommandOpenDocuments::execute()
 {
     const auto resFileNames = OpenFileNames::get(this->mainWidget());
     if (!resFileNames.listFilepath.empty())
-        this->openDocumentsFromList(resFileNames.listFilepath);
-}
-
-void CommandOpenDocuments::openDocumentsFromList(Span<const FilePath> listFilePath)
-{
-    auto appModule = AppModule::get();
-    for (const FilePath& fp : listFilePath) {
-        DocumentPtr docPtr = this->app()->findDocumentByLocation(fp);
-        if (docPtr.IsNull()) {
-            docPtr = this->app()->newDocument();
-            const TaskId taskId = this->taskMgr()->newTask([=](TaskProgress* progress) {
-                QElapsedTimer chrono;
-                chrono.start();
-                docPtr->setName(fp.stem().u8string());
-                docPtr->setFilePath(fp);
-
-                const bool okImport =
-                        appModule->ioSystem()->importInDocument()
-                        .targetDocument(docPtr)
-                        .withFilepath(fp)
-                        .withParametersProvider(appModule)
-                        .withEntityPostProcess([=](TDF_Label labelEntity, TaskProgress* progress) {
-                            appModule->computeBRepMesh(labelEntity, progress);
-                        })
-                        .withEntityPostProcessRequiredIf(&IO::formatProvidesBRep)
-                        .withEntityPostProcessInfoProgress(20, Command::textIdTr("Mesh BRep shapes"))
-                        .withMessenger(appModule)
-                        .withTaskProgress(progress)
-                        .execute();
-                if (okImport)
-                    appModule->emitInfo(fmt::format(Command::textIdTr("Import time: {}ms"), chrono.elapsed()));
-            });
-            this->taskMgr()->setTitle(taskId, fp.stem().u8string());
-            this->taskMgr()->run(taskId);
-            appModule->prependRecentFile(fp);
-        }
-        else {
-            if (listFilePath.size() == 1)
-                this->setCurrentDocument(docPtr);
-        }
-    } // endfor()
+        FileCommandTools::openDocumentsFromList(this->context(), resFileNames.listFilepath);
 }
 
 CommandImportInCurrentDocument::CommandImportInCurrentDocument(IAppContext* context)
@@ -394,7 +408,7 @@ CommandCloseCurrentDocument::CommandCloseCurrentDocument(IAppContext* context)
 
 void CommandCloseCurrentDocument::execute()
 {
-    closeDocument(this->context(), this->currentDocument());
+    FileCommandTools::closeDocument(this->context(), this->currentDocument());
 }
 
 bool CommandCloseCurrentDocument::getEnabledStatus() const
@@ -419,14 +433,14 @@ CommandCloseAllDocuments::CommandCloseAllDocuments(IAppContext* context)
     auto action = new QAction(this);
     action->setText(Command::tr("Close all"));
     action->setToolTip(Command::tr("Close all documents"));
-    action->setShortcut(Qt::CTRL + Qt::SHIFT + Qt::Key_W);
+    action->setShortcut((Qt::CTRL | Qt::SHIFT) + Qt::Key_W);
     this->setAction(action);
 }
 
 void CommandCloseAllDocuments::execute()
 {
     while (!this->guiApp()->guiDocuments().empty())
-        closeDocument(this->context(), this->currentDocument());
+        FileCommandTools::closeDocument(this->context(), this->currentDocument());
 }
 
 bool CommandCloseAllDocuments::getEnabledStatus() const
@@ -456,7 +470,6 @@ CommandCloseAllDocumentsExceptCurrent::CommandCloseAllDocumentsExceptCurrent(IAp
 
 void CommandCloseAllDocumentsExceptCurrent::execute()
 {
-#if 4
     GuiDocument* currentGuiDoc = this->currentGuiDocument();
     std::vector<GuiDocument*> vecGuiDoc;
     for (GuiDocument* guiDoc : this->guiApp()->guiDocuments())
@@ -464,9 +477,8 @@ void CommandCloseAllDocumentsExceptCurrent::execute()
 
     for (GuiDocument* guiDoc : vecGuiDoc) {
         if (guiDoc != currentGuiDoc)
-            closeDocument(this->context(), guiDoc->document()->identifier());
+            FileCommandTools::closeDocument(this->context(), guiDoc->document()->identifier());
     }
-#endif
 }
 
 bool CommandCloseAllDocumentsExceptCurrent::getEnabledStatus() const
@@ -483,6 +495,69 @@ void CommandCloseAllDocumentsExceptCurrent::updateActionText(Document::Identifie
                 Command::tr("Close all except \"%1\"").arg(strFilepathQuoted(docName)) :
                 Command::tr("Close all except current");
     this->action()->setText(textActionClose);
+}
+
+CommandRecentFiles::CommandRecentFiles(IAppContext* context)
+    : Command(context)
+{
+    auto action = new QAction(this);
+    action->setText(Command::tr("Recent files"));
+    this->setAction(action);
+}
+
+CommandRecentFiles::CommandRecentFiles(IAppContext* context, QMenu* containerMenu)
+    : CommandRecentFiles(context)
+{
+    QObject::connect(
+                containerMenu, &QMenu::aboutToShow,
+                this, &CommandRecentFiles::recreateEntries
+    );
+}
+
+void CommandRecentFiles::execute()
+{
+}
+
+void CommandRecentFiles::recreateEntries()
+{
+    QMenu* menu = this->action()->menu();
+    if (!menu)
+        menu = new QMenu(this->mainWidget());
+
+    menu->clear();
+    int idFile = 0;
+    auto appModule = AppModule::get();
+    const RecentFiles& recentFiles = appModule->properties()->recentFiles.value();
+    for (const RecentFile& recentFile : recentFiles) {
+        const QString strFilePath = filepathTo<QString>(recentFile.filepath);
+        const QString strEntryRecentFile = Command::tr("%1 | %2").arg(++idFile).arg(strFilePath);
+        menu->addAction(strEntryRecentFile, this, [=]{
+            FileCommandTools::openDocument(this->context(), recentFile.filepath);
+        });
+    }
+
+    if (!recentFiles.empty()) {
+        menu->addSeparator();
+        menu->addAction(Command::tr("Clear menu"), this, [=]{
+            menu->clear();
+            appModule->properties()->recentFiles.setValue({});
+        });
+    }
+
+    this->action()->setMenu(menu);
+}
+
+CommandQuitApplication::CommandQuitApplication(IAppContext* context)
+    : Command(context)
+{
+    auto action = new QAction(this);
+    action->setText(Command::tr("Quit"));
+    this->setAction(action);
+}
+
+void CommandQuitApplication::execute()
+{
+    QApplication::quit();
 }
 
 CommandMainWidgetToggleFullscreen::CommandMainWidgetToggleFullscreen(IAppContext* context)
