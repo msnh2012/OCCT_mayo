@@ -23,6 +23,7 @@
 #include "../gui/gui_document.h"
 #include "app_module.h"
 #include "commands_file.h"
+#include "commands_display.h"
 #include "commands_tools.h"
 #include "commands_window.h"
 #include "commands_help.h"
@@ -48,12 +49,10 @@
 #  include "windows/win_taskbar_global_progress.h"
 #endif
 
-#include <QtCore/QElapsedTimer>
 #include <QtCore/QMimeData>
 #include <QtCore/QTimer>
 #include <QtGui/QDragEnterEvent>
 #include <QtGui/QDropEvent>
-#include <QActionGroup> // WARNING Qt5 <QtWidgets/...> / Qt6 <QtGui/...>
 #include <QtDebug>
 
 namespace Mayo {
@@ -115,6 +114,14 @@ public:
             return ModeWidgetMain::Documents;
 
         return ModeWidgetMain::Unknown;
+    }
+
+    V3dViewController* v3dViewController(const GuiDocument* guiDoc) const override
+    {
+        auto widgetDoc = this->findWidgetGuiDocument([=](WidgetGuiDocument* candidate) {
+            return candidate->guiDocument() == guiDoc;
+        });
+        return widgetDoc ? widgetDoc->controller() : nullptr;
     }
 
     int findDocumentIndex(Document::Identifier docId) const override
@@ -220,6 +227,13 @@ MainWindow::MainWindow(GuiApplication* guiApp, QWidget *parent)
     this->addCommand<CommandCloseAllDocuments>("close-all-docs");
     this->addCommand<CommandCloseAllDocumentsExceptCurrent>("close-all-docs-except-current");
     this->addCommand<CommandQuitApplication>("quit");
+    // "Display" commands
+    this->addCommand<CommandChangeProjection>("change-projection");
+    this->addCommand<CommandChangeDisplayMode>("change-display-mode", m_ui->menu_Display);
+    this->addCommand<CommandToggleOriginTrihedron>("toggle-origin-trihedron");
+    this->addCommand<CommandTogglePerformanceStats>("toggle-performance-stats");
+    this->addCommand<CommandZoomInCurrentDocument>("current-doc-zoom-in");
+    this->addCommand<CommandZoomOutCurrentDocument>("current-doc-zoom-out");
     // "Tools" commands
     this->addCommand<CommandSaveViewImage>("save-view-image");
     this->addCommand<CommandInspectXde>("inspect-xde");
@@ -250,6 +264,17 @@ MainWindow::MainWindow(GuiApplication* guiApp, QWidget *parent)
     }
 
     {
+        auto menu = m_ui->menu_Display;
+        menu->addAction(fnGetAction("change-projection"));
+        menu->addAction(fnGetAction("change-display-mode"));
+        menu->addAction(fnGetAction("toggle-origin-trihedron"));
+        menu->addAction(fnGetAction("toggle-performance-stats"));
+        menu->addSeparator();
+        menu->addAction(fnGetAction("current-doc-zoom-in"));
+        menu->addAction(fnGetAction("current-doc-zoom-out"));
+    }
+
+    {
         auto menu = m_ui->menu_Tools;
         menu->addAction(fnGetAction("save-view-image"));
         menu->addAction(fnGetAction("inspect-xde"));
@@ -276,18 +301,11 @@ MainWindow::MainWindow(GuiApplication* guiApp, QWidget *parent)
     m_ui->btn_PreviousGuiDocument->setDefaultAction(fnGetAction("previous-doc"));
     m_ui->btn_NextGuiDocument->setDefaultAction(fnGetAction("next-doc"));
     m_ui->btn_CloseGuiDocument->setDefaultAction(fnGetAction("close-doc"));
-
-    m_ui->actionZoomIn->setIcon(mayoTheme()->icon(Theme::Icon::ZoomIn));
-    m_ui->actionZoomOut->setIcon(mayoTheme()->icon(Theme::Icon::ZoomOut));
     m_ui->btn_CloseLeftSideBar->setIcon(mayoTheme()->icon(Theme::Icon::BackSquare));
-
-    m_ui->actionToggleOriginTrihedron->setChecked(false);
-    m_ui->actionTogglePerformanceStats->setChecked(false);
 
     mayoTheme()->setupHeaderComboBox(m_ui->combo_LeftContents);
     mayoTheme()->setupHeaderComboBox(m_ui->combo_GuiDocuments);
 
-    auto sigComboIndexChanged = qOverload<int>(&QComboBox::currentIndexChanged);
     // "HomeFiles" actions
     QObject::connect(
                 m_ui->widget_HomeFiles, &WidgetHomeFiles::newDocumentRequested,
@@ -301,57 +319,29 @@ MainWindow::MainWindow(GuiApplication* guiApp, QWidget *parent)
                 m_ui->widget_HomeFiles, &WidgetHomeFiles::recentFileOpenRequested,
                 this, &MainWindow::openDocument
     );
-    // "Display" actions
-    QObject::connect(
-                m_ui->menu_Display, &QMenu::aboutToShow,
-                this, &MainWindow::createMenuDisplayMode
-    );
-    {
-        auto group = new QActionGroup(m_ui->menu_Projection);
-        group->setExclusive(true);
-        group->addAction(m_ui->actionProjectionOrthographic);
-        group->addAction(m_ui->actionProjectionPerspective);
-    }
-    QObject::connect(m_ui->menu_Projection, &QMenu::triggered, this, [=](QAction* action) {
-        if (this->currentWidgetGuiDocument()) {
-            const GuiDocument* guiDoc = this->currentWidgetGuiDocument()->guiDocument();
-            guiDoc->v3dView()->Camera()->SetProjectionType(
-                        action == m_ui->actionProjectionOrthographic ?
-                            Graphic3d_Camera::Projection_Orthographic :
-                            Graphic3d_Camera::Projection_Perspective);
-            guiDoc->v3dView()->Update();
-        }
-    });
-    QObject::connect(
-                m_ui->actionToggleOriginTrihedron, &QAction::toggled,
-                this, &MainWindow::toggleCurrentDocOriginTrihedron);
-    QObject::connect(
-                m_ui->actionTogglePerformanceStats, &QAction::toggled,
-                this, &MainWindow::toggleCurrentDocPerformanceStats);
-    QObject::connect(
-                m_ui->actionZoomIn, &QAction::triggered,
-                this, &MainWindow::zoomInCurrentDoc);
-    QObject::connect(
-                m_ui->actionZoomOut, &QAction::triggered,
-                this, &MainWindow::zoomOutCurrentDoc);
     // "Window" actions and navigation in documents
     QObject::connect(
-                m_ui->combo_GuiDocuments, sigComboIndexChanged,
-                this, &MainWindow::onCurrentDocumentIndexChanged);
+                m_ui->combo_GuiDocuments, qOverload<int>(&QComboBox::currentIndexChanged),
+                this, &MainWindow::onCurrentDocumentIndexChanged
+    );
     QObject::connect(
                 m_ui->widget_FileSystem, &WidgetFileSystem::locationActivated,
-                this, &MainWindow::onWidgetFileSystemLocationActivated);
+                this, &MainWindow::onWidgetFileSystemLocationActivated
+    );
     // Left header bar of controls
     QObject::connect(
                 m_ui->btn_CloseLeftSideBar, &QAbstractButton::clicked,
-                this->getCommand("toggle-left-sidebar"), &Command::execute);
+                this->getCommand("toggle-left-sidebar"), &Command::execute
+    );
     // ...
     QObject::connect(
-                m_ui->combo_LeftContents, sigComboIndexChanged,
-                this, &MainWindow::onLeftContentsPageChanged);
+                m_ui->combo_LeftContents, qOverload<int>(&QComboBox::currentIndexChanged),
+                this, &MainWindow::onLeftContentsPageChanged
+    );
     QObject::connect(
                 m_ui->listView_OpenedDocuments, &QListView::clicked,
-                this, [=](const QModelIndex& index) { this->setCurrentDocumentIndex(index.row()); });
+                this, [=](const QModelIndex& index) { this->setCurrentDocumentIndex(index.row()); }
+    );
     QObject::connect(
                 AppModule::get(), &AppModule::message,
                 this, [=](Messenger::MessageType msgType, const QString& text) {
@@ -465,35 +455,6 @@ void MainWindow::showEvent(QShowEvent* event)
 
     winProgress->setWindow(this->windowHandle());
 #endif
-}
-
-void MainWindow::toggleCurrentDocOriginTrihedron()
-{
-    WidgetGuiDocument* widget = this->currentWidgetGuiDocument();
-    if (widget) {
-        widget->guiDocument()->toggleOriginTrihedronVisibility();
-        widget->guiDocument()->graphicsScene()->redraw();
-    }
-}
-
-void MainWindow::toggleCurrentDocPerformanceStats()
-{
-    WidgetGuiDocument* widget = this->currentWidgetGuiDocument();
-    GuiDocument* guiDoc = widget ? widget->guiDocument() : nullptr;
-    if (guiDoc) {
-        CppUtils::toggle(guiDoc->v3dView()->ChangeRenderingParams().ToShowStats);
-        guiDoc->graphicsScene()->redraw();
-    }
-}
-
-void MainWindow::zoomInCurrentDoc()
-{
-    this->currentWidgetGuiDocument()->controller()->zoomIn();
-}
-
-void MainWindow::zoomOutCurrentDoc()
-{
-    this->currentWidgetGuiDocument()->controller()->zoomOut();
 }
 
 void MainWindow::onApplicationItemSelectionChanged()
@@ -663,37 +624,6 @@ void MainWindow::onCurrentDocumentIndexChanged(int idx)
     const DocumentPtr docPtr = m_guiApp->application()->findDocumentByIndex(idx);
     const FilePath docFilePath = docPtr ? docPtr->filePath() : FilePath();
     m_ui->widget_FileSystem->setLocation(filepathTo<QFileInfo>(docFilePath));
-
-    if (this->currentWidgetGuiDocument()) {
-        const GuiDocument* guiDoc = this->currentWidgetGuiDocument()->guiDocument();
-        // Sync action with current visibility status of origin trihedron
-        {
-            QSignalBlocker sigBlk(m_ui->actionToggleOriginTrihedron); Q_UNUSED(sigBlk);
-            m_ui->actionToggleOriginTrihedron->setChecked(guiDoc->isOriginTrihedronVisible());
-        }
-        // Sync action with current visibility status of rendering performance stats
-        {
-            QSignalBlocker sigBlk(m_ui->actionTogglePerformanceStats); Q_UNUSED(sigBlk);
-            m_ui->actionTogglePerformanceStats->setChecked(guiDoc->v3dView()->ChangeRenderingParams().ToShowStats);
-        }
-        // Sync menu with current projection type
-        {
-            const Graphic3d_Camera::Projection viewProjectionType =
-                    guiDoc->v3dView()->Camera()->ProjectionType();
-            Q_ASSERT(viewProjectionType == Graphic3d_Camera::Projection_Perspective
-                     || viewProjectionType == Graphic3d_Camera::Projection_Orthographic);
-            QAction* actionProjection =
-                viewProjectionType == Graphic3d_Camera::Projection_Perspective ?
-                        m_ui->actionProjectionPerspective :
-                        m_ui->actionProjectionOrthographic;
-            [[maybe_unused]] QSignalBlocker sigBlk(m_ui->menu_Projection);
-            actionProjection->setChecked(true);
-        }
-    }
-    else {
-        m_ui->actionToggleOriginTrihedron->setChecked(false);
-        m_ui->actionTogglePerformanceStats->setChecked(false);
-    }
  }
 
 void MainWindow::openDocument(const FilePath& fp)
@@ -719,14 +649,6 @@ void MainWindow::updateControlsActivation()
         cmd->action()->setEnabled(cmd->getEnabledStatus());
     }
 
-    m_ui->menu_Projection->setEnabled(!appDocumentsEmpty);
-    m_ui->actionProjectionOrthographic->setEnabled(!appDocumentsEmpty);
-    m_ui->actionProjectionPerspective->setEnabled(!appDocumentsEmpty);
-    m_ui->actionDisplayMode->setEnabled(!appDocumentsEmpty);
-    m_ui->actionToggleOriginTrihedron->setEnabled(!appDocumentsEmpty);
-    m_ui->actionTogglePerformanceStats->setEnabled(!appDocumentsEmpty);
-    m_ui->actionZoomIn->setEnabled(!appDocumentsEmpty);
-    m_ui->actionZoomOut->setEnabled(!appDocumentsEmpty);
     m_ui->combo_GuiDocuments->setEnabled(!appDocumentsEmpty);
 }
 
@@ -794,50 +716,6 @@ QMenu* MainWindow::createMenuModelTreeSettings()
         if (userActions.fnSyncItems)
             userActions.fnSyncItems();
     });
-
-    return menu;
-}
-
-QMenu* MainWindow::createMenuDisplayMode()
-{
-    QMenu* menu = m_ui->actionDisplayMode->menu();
-    if (!menu) {
-        menu = new QMenu(this);
-        m_ui->actionDisplayMode->setMenu(menu);
-    }
-
-    menu->clear();
-
-    WidgetGuiDocument* widgetGuiDoc = this->currentWidgetGuiDocument();
-    GuiDocument* guiDoc = widgetGuiDoc ? widgetGuiDoc->guiDocument() : nullptr;
-    if (!guiDoc)
-        return menu;
-
-    const auto spanDrivers = m_guiApp->graphicsObjectDrivers();
-    for (const GraphicsObjectDriverPtr& driver : spanDrivers) {
-        if (driver->displayModes().empty())
-            continue; // Skip
-
-        if (driver != spanDrivers.front())
-            menu->addSeparator();
-
-        auto group = new QActionGroup(menu);
-        group->setExclusive(true);
-        for (const Enumeration::Item& displayMode : driver->displayModes().items()) {
-            auto action = new QAction(to_QString(displayMode.name.tr()), menu);
-            action->setCheckable(true);
-            action->setData(displayMode.value);
-            menu->addAction(action);
-            group->addAction(action);
-            if (displayMode.value == guiDoc->activeDisplayMode(driver))
-                action->setChecked(true);
-        }
-
-        QObject::connect(group, &QActionGroup::triggered, this, [=](QAction* action) {
-            guiDoc->setActiveDisplayMode(driver, action->data().toInt());
-            guiDoc->graphicsScene()->redraw();
-        });
-    }
 
     return menu;
 }

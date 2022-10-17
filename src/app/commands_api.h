@@ -19,6 +19,7 @@ namespace Mayo {
 class Application;
 class GuiApplication;
 class GuiDocument;
+class V3dViewController;
 class TaskManager;
 
 class IAppContext : public QObject {
@@ -33,6 +34,7 @@ public:
     virtual QWidget* widgetMain() const = 0;
     virtual QWidget* widgetLeftSidebar() const = 0;
     virtual ModeWidgetMain modeWidgetMain() const = 0;
+    virtual V3dViewController* v3dViewController(const GuiDocument* guiDoc) const = 0;
 
     virtual Document::Identifier currentDocument() const = 0;
     virtual void setCurrentDocument(Document::Identifier docId) = 0;

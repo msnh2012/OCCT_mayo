@@ -583,20 +583,6 @@
     <property name="title">
      <string>&amp;Display</string>
     </property>
-    <widget class="QMenu" name="menu_Projection">
-     <property name="title">
-      <string>Projection</string>
-     </property>
-     <addaction name="actionProjectionOrthographic"/>
-     <addaction name="actionProjectionPerspective"/>
-    </widget>
-    <addaction name="menu_Projection"/>
-    <addaction name="actionDisplayMode"/>
-    <addaction name="actionToggleOriginTrihedron"/>
-    <addaction name="actionTogglePerformanceStats"/>
-    <addaction name="separator"/>
-    <addaction name="actionZoomIn"/>
-    <addaction name="actionZoomOut"/>
    </widget>
    <addaction name="menu_File"/>
    <addaction name="menu_Display"/>
@@ -604,65 +590,6 @@
    <addaction name="menu_Window"/>
    <addaction name="menu_Help"/>
   </widget>
-  <action name="actionToggleOriginTrihedron">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>Show Origin Trihedron</string>
-   </property>
-   <property name="toolTip">
-    <string>Show/Hide Origin Trihedron</string>
-   </property>
-  </action>
-  <action name="actionZoomIn">
-   <property name="text">
-    <string>Zoom In</string>
-   </property>
-   <property name="shortcut">
-    <string>Ctrl++</string>
-   </property>
-  </action>
-  <action name="actionZoomOut">
-   <property name="text">
-    <string>Zoom Out</string>
-   </property>
-   <property name="shortcut">
-    <string>Ctrl+-</string>
-   </property>
-  </action>
-  <action name="actionProjectionPerspective">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>Perspective</string>
-   </property>
-  </action>
-  <action name="actionProjectionOrthographic">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>Orthographic</string>
-   </property>
-  </action>
-  <action name="actionDisplayMode">
-   <property name="text">
-    <string>Mode</string>
-   </property>
-  </action>
-  <action name="actionTogglePerformanceStats">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>Show Performance Stats</string>
-   </property>
-   <property name="toolTip">
-    <string>Show/Hide rendering performance statistics</string>
-   </property>
-  </action>
  </widget>
  <layoutdefault spacing="6" margin="11"/>
  <customwidgets>

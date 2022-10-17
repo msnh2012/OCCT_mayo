@@ -40,12 +40,6 @@ protected:
     void showEvent(QShowEvent* event) override;
 
 private:
-    // -- Display menu
-    void toggleCurrentDocOriginTrihedron();
-    void toggleCurrentDocPerformanceStats();
-    void zoomInCurrentDoc();
-    void zoomOutCurrentDoc();
-
     void onApplicationItemSelectionChanged();
     void onOperationFinished(bool ok, const QString& msg);
     void onGuiDocumentAdded(GuiDocument* guiDoc);
@@ -63,10 +57,8 @@ private:
     QWidget* findLeftHeaderPlaceHolder() const;
     QWidget* recreateLeftHeaderPlaceHolder();
     QMenu* createMenuModelTreeSettings();
-    QMenu* createMenuDisplayMode();
 
     Command* getCommand(std::string_view name) const;
-    template<typename CMD> CMD* getCommand() const;
     template<typename CMD, typename... ARGS> CMD* addCommand(std::string_view name, ARGS... p);
 
     friend class AppContext;
@@ -85,17 +77,6 @@ private:
 // --
 // -- Implementation
 // --
-
-template<typename CMD>CMD* MainWindow::getCommand() const
-{
-    for (const auto& mapPair : m_mapCommand) {
-        auto cmd = dynamic_cast<CMD*>(mapPair.second);
-        if (cmd)
-            return cmd;
-    }
-
-    return nullptr;
-}
 
 template<typename CMD, typename... ARGS> CMD* MainWindow::addCommand(std::string_view name, ARGS... p)
 {
