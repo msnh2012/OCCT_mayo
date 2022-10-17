@@ -568,9 +568,6 @@
     <property name="title">
      <string>&amp;Help</string>
     </property>
-    <addaction name="actionReportBug"/>
-    <addaction name="separator"/>
-    <addaction name="actionAboutMayo"/>
    </widget>
    <widget class="QMenu" name="menu_Tools">
     <property name="title">
@@ -607,16 +604,6 @@
    <addaction name="menu_Window"/>
    <addaction name="menu_Help"/>
   </widget>
-  <action name="actionAboutMayo">
-   <property name="text">
-    <string>About Mayo</string>
-   </property>
-  </action>
-  <action name="actionReportBug">
-   <property name="text">
-    <string>Report Bug</string>
-   </property>
-  </action>
   <action name="actionToggleOriginTrihedron">
    <property name="checkable">
     <bool>true</bool>

@@ -25,7 +25,7 @@
 #include "commands_file.h"
 #include "commands_tools.h"
 #include "commands_window.h"
-#include "dialog_about.h"
+#include "commands_help.h"
 #include "dialog_task_manager.h"
 #include "document_property_group.h"
 #include "document_tree_node_properties_providers.h"
@@ -50,13 +50,10 @@
 
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QMimeData>
-#include <QtCore/QSettings>
 #include <QtCore/QTimer>
-#include <QtGui/QDesktopServices>
 #include <QtGui/QDragEnterEvent>
 #include <QtGui/QDropEvent>
 #include <QActionGroup> // WARNING Qt5 <QtWidgets/...> / Qt6 <QtGui/...>
-#include <QtWidgets/QApplication>
 #include <QtDebug>
 
 namespace Mayo {
@@ -228,10 +225,13 @@ MainWindow::MainWindow(GuiApplication* guiApp, QWidget *parent)
     this->addCommand<CommandInspectXde>("inspect-xde");
     this->addCommand<CommandEditOptions>("edit-options");
     // "Window" commands
-    this->addCommand<CommandMainWidgetToggleFullscreen>("fullscreen");
     this->addCommand<CommandLeftSidebarWidgetToggle>("toggle-left-sidebar");
+    this->addCommand<CommandMainWidgetToggleFullscreen>("toggle-fullscreen");
     this->addCommand<CommandPreviousDocument>("previous-doc");
     this->addCommand<CommandNextDocument>("next-doc");
+    // "Help" commands
+    this->addCommand<CommandReportBug>("report-bug");
+    this->addCommand<CommandAbout>("about");
 
     {
         auto menu = m_ui->menu_File;
@@ -260,17 +260,23 @@ MainWindow::MainWindow(GuiApplication* guiApp, QWidget *parent)
     {
         auto menu = m_ui->menu_Window;
         menu->addAction(fnGetAction("toggle-left-sidebar"));
-        menu->addAction(fnGetAction("fullscreen"));
+        menu->addAction(fnGetAction("toggle-fullscreen"));
         menu->addSeparator();
         menu->addAction(fnGetAction("previous-doc"));
         menu->addAction(fnGetAction("next-doc"));
+    }
+
+    {
+        auto menu = m_ui->menu_Help;
+        menu->addAction(fnGetAction("report-bug"));
+        menu->addSeparator();
+        menu->addAction(fnGetAction("about"));
     }
 
     m_ui->btn_PreviousGuiDocument->setDefaultAction(fnGetAction("previous-doc"));
     m_ui->btn_NextGuiDocument->setDefaultAction(fnGetAction("next-doc"));
     m_ui->btn_CloseGuiDocument->setDefaultAction(fnGetAction("close-doc"));
 
-    m_ui->actionAboutMayo->setText(tr("About %1").arg(QApplication::applicationName()));
     m_ui->actionZoomIn->setIcon(mayoTheme()->icon(Theme::Icon::ZoomIn));
     m_ui->actionZoomOut->setIcon(mayoTheme()->icon(Theme::Icon::ZoomOut));
     m_ui->btn_CloseLeftSideBar->setIcon(mayoTheme()->icon(Theme::Icon::BackSquare));
@@ -328,13 +334,6 @@ MainWindow::MainWindow(GuiApplication* guiApp, QWidget *parent)
     QObject::connect(
                 m_ui->actionZoomOut, &QAction::triggered,
                 this, &MainWindow::zoomOutCurrentDoc);
-    // "Help" actions
-    QObject::connect(
-                m_ui->actionReportBug, &QAction::triggered,
-                this, &MainWindow::reportbug);
-    QObject::connect(
-                m_ui->actionAboutMayo, &QAction::triggered,
-                this, &MainWindow::aboutMayo);
     // "Window" actions and navigation in documents
     QObject::connect(
                 m_ui->combo_GuiDocuments, sigComboIndexChanged,
@@ -495,17 +494,6 @@ void MainWindow::zoomInCurrentDoc()
 void MainWindow::zoomOutCurrentDoc()
 {
     this->currentWidgetGuiDocument()->controller()->zoomOut();
-}
-
-void MainWindow::aboutMayo()
-{
-    auto dlg = new DialogAbout(this);
-    QtWidgetsUtils::asyncDialogExec(dlg);
-}
-
-void MainWindow::reportbug()
-{
-    QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/fougue/mayo/issues")));
 }
 
 void MainWindow::onApplicationItemSelectionChanged()

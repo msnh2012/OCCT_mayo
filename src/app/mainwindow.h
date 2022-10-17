@@ -45,9 +45,6 @@ private:
     void toggleCurrentDocPerformanceStats();
     void zoomInCurrentDoc();
     void zoomOutCurrentDoc();
-    // -- Help menu
-    void aboutMayo();
-    void reportbug();
 
     void onApplicationItemSelectionChanged();
     void onOperationFinished(bool ok, const QString& msg);
